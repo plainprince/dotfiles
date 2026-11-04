@@ -1,0 +1,24 @@
+#!/bin/sh
+# Runs as dwl's -s command, once WAYLAND_DISPLAY exists.
+# stdin is dwl's status stream (title/tags/layout), consumed by dwlb.
+#
+# Bar colours are greyscale with an alpha channel (#RRGGBBAA, 0xa0 = 160/255):
+# dwlb composites into an ARGB8888 buffer, so the bar is see-through.
+
+wallpaper=${WALLPAPER:-$HOME/Pictures/Wallpapers/himalayan-mountains.png}
+[ -f "$wallpaper" ] && swaybg -i "$wallpaper" -m fill </dev/null >/dev/null 2>&1 &
+
+# Status text goes to the running bar over its socket; wait until it exists.
+(
+	until timeout 2 dwlb -status all " " </dev/null >/dev/null 2>&1; do sleep 1; done
+	exec "$HOME/.local/bin/status.sh" </dev/null | dwlb -status-stdin all
+) &
+
+exec dwlb \
+	-font "FiraCode Nerd Font:size=10" \
+	-tags 10 1 2 3 4 5 6 7 8 9 0 \
+	-active-fg-color '#ffffff' -active-bg-color '#222222a0' \
+	-occupied-fg-color '#cccccc' -occupied-bg-color '#000000a0' \
+	-inactive-fg-color '#cccccc' -inactive-bg-color '#000000a0' \
+	-urgent-fg-color '#000000' -urgent-bg-color '#cccccca0' \
+	-middle-bg-color '#000000a0' -middle-bg-color-selected '#000000a0'

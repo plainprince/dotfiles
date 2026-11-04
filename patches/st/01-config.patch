@@ -1,0 +1,525 @@
+diff --git a/config.def.h b/config.def.h
+index a4d987e..7db1f6a 100644
+--- a/config.def.h
++++ b/config.def.h
+@@ -6,7 +6,15 @@
+  * font: see http://freedesktop.org/software/fontconfig/fontconfig-user.html
+  */
+ 
+-#define DEFAULTFONTSIZE 13
++/* Font face, opened as a file: <FONT_FACE>-<style>.ttf is searched in the usual
++ * font directories (see wlfontpath() in wl.c) and loaded directly, without
++ * fontconfig family matching. Undefine it to go back to the `font` pattern. */
++#define FONT_FACE "FiraCodeNerdFontMono"
++
++/* Font size in pixels (15 px ~= 11 pt at 96 dpi). st-wl passes this to
++ * wlloadfonts(), which replaces any size coming from the font string (see `font`
++ * in wl.c), so this is the knob that actually sets the terminal font size. */
++#define DEFAULTFONTSIZE 15
+ 
+ #if FONT2_PATCH
+ /* Spare fonts */
+@@ -103,8 +111,8 @@ int allowwindowops = 1;
+  * near minlatency, but it waits longer for slow updates to avoid partial draw.
+  * low minlatency will tear/flicker more, as it can "detect" idle too early.
+  */
+-static double minlatency = 2;
+-static double maxlatency = 33;
++static double minlatency = 1;
++static double maxlatency = 12;
+ 
+ #if SYNC_PATCH
+ /*
+@@ -137,7 +145,7 @@ int hidecursor = 1;
+  *    Bold affects lines thickness if boxdraw_bold is not 0. Italic is ignored.
+  * 0: disable (render all U25XX glyphs normally from the font).
+  */
+-const int boxdraw = 0;
++const int boxdraw = 1;
+ const int boxdraw_bold = 0;
+ 
+ /* braille (U28XX):  1: render as adjacent "pixels",  0: use font */
+@@ -175,7 +183,7 @@ unsigned int tabspaces = 8;
+ 
+ #if ALPHA_PATCH
+ /* bg opacity */
+-#define DEFAULT_ALPHA 0.95
++#define DEFAULT_ALPHA 0.8
+ float alpha = DEFAULT_ALPHA;
+ uint8_t term_alpha = (uint8_t)(DEFAULT_ALPHA*255.0);
+ #if ALPHA_GRADIENT_PATCH
+@@ -204,33 +212,32 @@ char *xdndescchar = " !\"#$&'()*;<>?[\\]^`{|}~";
+ 
+ /* Terminal colors (16 first used in escape sequence) */
+ static const char *colorname[] = {
+-	/* 8 normal colors */
+-	[0] = "#2d2d2d", /* black   */
+-	[1] = "#f2777a", /* red     */
+-	[2] = "#99cc99", /* green   */
+-	[3] = "#ffcc66", /* yellow  */
+-	[4] = "#6699cc", /* blue    */
+-	[5] = "#cc99cc", /* magenta */
+-	[6] = "#66cccc", /* cyan    */
+-	[7] = "#d3d0c8", /* white   */
+-
+-	/* 8 bright colors */
+-	[8]  = "#747369", /* black   */
+-	[9]  = "#f2777a", /* red     */
+-	[10] = "#99cc99", /* green   */
+-	[11] = "#ffcc66", /* yellow  */
+-	[12] = "#6699cc", /* blue    */
+-	[13] = "#cc99cc", /* magenta */
+-	[14] = "#66cccc", /* cyan    */
+-	[15] = "#f2f0ec", /* white   */
++	/* tokyonight (night) */
++	[0]  = "#1d202f", /* black   */
++	[1]  = "#f7768e", /* red     */
++	[2]  = "#9ece6a", /* green   */
++	[3]  = "#e0af68", /* yellow  */
++	[4]  = "#7aa2f7", /* blue    */
++	[5]  = "#bb9af7", /* magenta */
++	[6]  = "#7dcfff", /* cyan    */
++	[7]  = "#a9b1d6", /* white   */
++
++	[8]  = "#414868", /* bright black   */
++	[9]  = "#f7768e", /* bright red     */
++	[10] = "#9ece6a", /* bright green   */
++	[11] = "#e0af68", /* bright yellow  */
++	[12] = "#7aa2f7", /* bright blue    */
++	[13] = "#bb9af7", /* bright magenta */
++	[14] = "#7dcfff", /* bright cyan    */
++	[15] = "#c0caf5", /* bright white   */
+ 
+ 	[255] = 0,
+ 
+ 	/* more colors can be added after 255 to use with DefaultXX */
+-	"#add8e6", /* 256 -> cursor */
+-	"#555555", /* 257 -> rev cursor*/
+-	"#300a24", /* 258 -> bg */
+-	"#e5e5e5", /* 259 -> fg */
++	"#cccccc", /* 256 -> cursor */
++	"#555555", /* 257 -> reverse cursor */
++	"#24283b", /* 258 -> default background */
++	"#c0caf5", /* 259 -> default foreground */
+ };
+ 
+ 
+diff --git a/patch/boxdraw_wl.c b/patch/boxdraw_wl.c
+new file mode 100644
+index 0000000..8fff47f
+--- /dev/null
++++ b/patch/boxdraw_wl.c
+@@ -0,0 +1,169 @@
++/*
++ * Copyright 2018 Avi Halachmi (:avih) avihpit@yahoo.com https://github.com/avih
++ * MIT/X Consortium License
++ *
++ * Wayland (wld) port of st's boxdraw patch.
++ *
++ * Upstream ships boxdraw.c, which draws through X11/Xft (XftDrawRect) and therefore
++ * cannot build in st-wl (X11/X.h redefines Glyph/Cursor/Font_, and the fork's Glyph
++ * has no .u member). The shape tables and the geometry logic are Avi's; only the
++ * rectangle primitive is replaced: wld_fill_rectangle on the wld renderer.
++ */
++
++/* Rounded non-negative integers division of n / d */
++#define BDIV(n, d) (((n) + (d) / 2) / (d))
++
++static void wldrawbox(int, int, int, int, uint32_t, uint32_t, ushort);
++static void wldrawboxlines(int, int, int, int, uint32_t, ushort);
++
++static void
++wlboxrect(uint32_t color, int x, int y, int w, int h)
++{
++	if (w > 0 && h > 0)
++		wld_fill_rectangle(wld.renderer, color | 0xff000000, x, y, w, h);
++}
++
++/* public API (declared in st.h) */
++
++int
++isboxdraw(Rune u)
++{
++	Rune block = u & ~0xff;
++	return (boxdraw && block == 0x2500 && boxdata[(uint8_t)u]) ||
++	       (boxdraw_braille && block == 0x2800);
++}
++
++/* the "index" is actually the entire shape data encoded as ushort */
++ushort
++boxdrawindex(const Glyph *g)
++{
++	if (boxdraw_braille && (g->u & ~0xff) == 0x2800)
++		return BRL | (uint8_t)g->u;
++	if (boxdraw_bold && (g->mode & ATTR_BOLD))
++		return BDB | boxdata[(uint8_t)g->u];
++	return boxdata[(uint8_t)g->u];
++}
++
++static void
++wldrawbox(int x, int y, int w, int h, uint32_t fg, uint32_t bg, ushort bd)
++{
++	ushort cat = bd & ~(BDB | 0xff);  /* mask out bold and data */
++	if (bd & (BDL | BDA)) {
++		/* lines (light/double/heavy/arcs) */
++		wldrawboxlines(x, y, w, h, fg, bd);
++
++	} else if (cat == BBD) {
++		/* lower (8-X)/8 block */
++		int d = BDIV((uint8_t)bd * h, 8);
++		wlboxrect(fg, x, y + d, w, h - d);
++
++	} else if (cat == BBU) {
++		/* upper X/8 block */
++		wlboxrect(fg, x, y, w, BDIV((uint8_t)bd * h, 8));
++
++	} else if (cat == BBL) {
++		/* left X/8 block */
++		wlboxrect(fg, x, y, BDIV((uint8_t)bd * w, 8), h);
++
++	} else if (cat == BBR) {
++		/* right (8-X)/8 block */
++		int d = BDIV((uint8_t)bd * w, 8);
++		wlboxrect(fg, x + d, y, w - d, h);
++
++	} else if (cat == BBQ) {
++		/* quadrants */
++		int w2 = BDIV(w, 2), h2 = BDIV(h, 2);
++		if (bd & TL)
++			wlboxrect(fg, x, y, w2, h2);
++		if (bd & TR)
++			wlboxrect(fg, x + w2, y, w - w2, h2);
++		if (bd & BL)
++			wlboxrect(fg, x, y + h2, w2, h - h2);
++		if (bd & BR)
++			wlboxrect(fg, x + w2, y + h2, w - w2, h - h2);
++
++	} else if (bd & BBS) {
++		/* shades: data is 1/2/3 for 25%/50%/75% alpha - blend fg into bg */
++		int d = (uint8_t)bd;
++		uint32_t r = ((((fg >> 16) & 0xff) * d + ((bg >> 16) & 0xff) * (4 - d)) / 4) & 0xff;
++		uint32_t g = ((((fg >>  8) & 0xff) * d + ((bg >>  8) & 0xff) * (4 - d)) / 4) & 0xff;
++		uint32_t b = ((( fg        & 0xff) * d + ( bg        & 0xff) * (4 - d)) / 4) & 0xff;
++		wlboxrect((r << 16) | (g << 8) | b, x, y, w, h);
++
++	} else if (cat == BRL) {
++		/* braille, each data bit is one dot of a 2x4 grid */
++		int w1 = BDIV(w, 2);
++		int h1 = BDIV(h, 4), h2 = BDIV(h, 2), h3 = BDIV(3 * h, 4);
++
++		if (bd & 1)   wlboxrect(fg, x,      y,      w1,     h1);
++		if (bd & 2)   wlboxrect(fg, x,      y + h1, w1,     h2 - h1);
++		if (bd & 4)   wlboxrect(fg, x,      y + h2, w1,     h3 - h2);
++		if (bd & 8)   wlboxrect(fg, x + w1, y,      w - w1, h1);
++		if (bd & 16)  wlboxrect(fg, x + w1, y + h1, w - w1, h2 - h1);
++		if (bd & 32)  wlboxrect(fg, x + w1, y + h2, w - w1, h3 - h2);
++		if (bd & 64)  wlboxrect(fg, x,      y + h3, w1,     h - h3);
++		if (bd & 128) wlboxrect(fg, x + w1, y + h3, w - w1, h - h3);
++	}
++}
++
++static void
++wldrawboxlines(int x, int y, int w, int h, uint32_t fg, ushort bd)
++{
++	/* s: stem thickness. width/8 roughly matches underscore thickness. */
++	/* We draw bold as 1.5 * normal-stem and at least 1px thicker.      */
++	/* doubles draw at least 3px, even when w or h < 3. bold needs 6px. */
++	int mwh = MIN(w, h);
++	int base_s = MAX(1, BDIV(mwh, 8));
++	int bold = (bd & BDB) && mwh >= 6;  /* possibly ignore boldness */
++	int s = bold ? MAX(base_s + 1, BDIV(3 * base_s, 2)) : base_s;
++	int w2 = BDIV(w - s, 2), h2 = BDIV(h - s, 2);
++	/* the s-by-s square (x + w2, y + h2, s, s) is the center texel.    */
++	/* The base length (per direction till edge) includes this square.  */
++
++	int light = bd & (LL | LU | LR | LD);
++	int double_ = bd & (DL | DU | DR | DD);
++
++	if (light) {
++		/* d: additional (negative) length to not-draw the center   */
++		/* texel - at arcs and avoid drawing inside (some) doubles  */
++		int arc = bd & BDA;
++		int multi_light = light & (light - 1);
++		int multi_double = double_ & (double_ - 1);
++		/* light crosses double only at DH+LV, DV+LH (ref. shapes)  */
++		int d = arc || (multi_double && !multi_light) ? -s : 0;
++
++		if (bd & LL)
++			wlboxrect(fg, x, y + h2, w2 + s + d, s);
++		if (bd & LU)
++			wlboxrect(fg, x + w2, y, s, h2 + s + d);
++		if (bd & LR)
++			wlboxrect(fg, x + w2 - d, y + h2, w - w2 + d, s);
++		if (bd & LD)
++			wlboxrect(fg, x + w2, y + h2 - d, s, h - h2 + d);
++	}
++
++	/* double lines - also align with light to form heavy when combined */
++	if (double_) {
++		int dl = bd & DL, du = bd & DU, dr = bd & DR, dd = bd & DD;
++		if (dl) {
++			int p = dd ? -s : 0, n = du ? -s : dd ? s : 0;
++			wlboxrect(fg, x, y + h2 + s, w2 + s + p, s);
++			wlboxrect(fg, x, y + h2 - s, w2 + s + n, s);
++		}
++		if (du) {
++			int p = dl ? -s : 0, n = dr ? -s : dl ? s : 0;
++			wlboxrect(fg, x + w2 - s, y, s, h2 + s + p);
++			wlboxrect(fg, x + w2 + s, y, s, h2 + s + n);
++		}
++		if (dr) {
++			int p = du ? -s : 0, n = dd ? -s : du ? s : 0;
++			wlboxrect(fg, x + w2 - p, y + h2 - s, w - w2 + p, s);
++			wlboxrect(fg, x + w2 - n, y + h2 + s, w - w2 + n, s);
++		}
++		if (dd) {
++			int p = dr ? -s : 0, n = dl ? -s : dr ? s : 0;
++			wlboxrect(fg, x + w2 + s, y + h2 - p, s, h - h2 + p);
++			wlboxrect(fg, x + w2 - s, y + h2 - n, s, h - h2 + n);
++		}
++	}
++}
+diff --git a/patch/x_include.c b/patch/x_include.c
+index 5a0ba58..d487eba 100644
+--- a/patch/x_include.c
++++ b/patch/x_include.c
+@@ -6,7 +6,8 @@
+ #include "background_image_x.c"
+ #endif
+ #if BOXDRAW_PATCH
+-#include "boxdraw.c"
++/* st-wl: stock boxdraw.c is X11/Xft-only, use the wld renderer port */
++#include "boxdraw_wl.c"
+ #endif
+ #if DRAG_AND_DROP_PATCH
+ #include "drag-n-drop.c"
+diff --git a/patches.def.h b/patches.def.h
+index b01814d..fa4f251 100644
+--- a/patches.def.h
++++ b/patches.def.h
+@@ -81,7 +81,7 @@
+ /* This patch adds custom rendering of lines/blocks/braille characters for gapless alignment.
+  * https://st.suckless.org/patches/boxdraw/
+  */
+-#define BOXDRAW_PATCH 0
++#define BOXDRAW_PATCH 1
+ 
+ /* By default st only sets PRIMARY on selection.
+  * This patch makes st set CLIPBOARD on selection.
+@@ -101,7 +101,7 @@
+  * available URLs.
+  * https://st.suckless.org/patches/copyurl/
+  */
+-#define COPYURL_PATCH 0
++#define COPYURL_PATCH 1
+ 
+ /* Select and copy the last URL displayed with Mod+l. Multiple invocations cycle through the
+  * available URLs. This variant also highlights the selected URLs.
+@@ -320,7 +320,7 @@
+  * In dwm, if the decoration hints patch is applied, then the st window will start out without a
+  * border. In GNOME and KDE the window should start without a window title.
+  */
+-#define NO_WINDOW_DECORATIONS_PATCH 0
++#define NO_WINDOW_DECORATIONS_PATCH 1
+ 
+ /* Open contents of the clipboard in a user-defined browser.
+  * https://st.suckless.org/patches/open_copied_url/
+@@ -376,7 +376,7 @@
+ /* Scroll back through terminal output using Shift+{PageUp, PageDown}.
+  * https://st.suckless.org/patches/scrollback/
+  */
+-#define SCROLLBACK_PATCH 0
++#define SCROLLBACK_PATCH 1
+ 
+ /* Scroll back through terminal output using Shift+MouseWheel.
+  * This variant depends on SCROLLBACK_PATCH being enabled.
+diff --git a/st.h b/st.h
+index c4914c6..7470d9a 100644
+--- a/st.h
++++ b/st.h
+@@ -67,7 +67,7 @@
+ #define DECOR_DEFAULT_COLOR	0x0ffffff
+ #endif // KITTY_GRAPHICS_PATCH
+ #if SCROLLBACK_PATCH || REFLOW_PATCH
+-#define HISTSIZE      2000
++#define HISTSIZE      5000
+ #endif // SCROLLBACK_PATCH | REFLOW_PATCH
+ 
+ #if DRAG_AND_DROP_PATCH
+diff --git a/wl.c b/wl.c
+index b85a9c4..749ea51 100644
+--- a/wl.c
++++ b/wl.c
+@@ -35,7 +35,9 @@ char *argv0;
+ #include "graphics.h"
+ #endif // KITTY_GRAPHICS_PATCH
+ 
+-static char *font = "JetBrainsMono Nerd Font:antialias=true:hintstyle=hintfull";
++/* Only used when FONT_FACE (config.h) is not defined, and to look up a font for
++ * glyphs the hardcoded face lacks. No size: wlloadfonts() applies DEFAULTFONTSIZE. */
++static char *font = "FiraCode Nerd Font Mono:antialias=true:autohint=true";
+ 
+ #if SIXEL_PATCH
+ #include "sixel.h"
+@@ -1841,11 +1843,120 @@ static int wlloadfont(Font *f, FcPattern *pattern, int type, int fontsize)
+ 	return 0;
+ }
+ 
++#ifdef FONT_FACE
++/* Locate <FONT_FACE>-<style>.ttf in the usual font directories. */
++static char *
++wlfontpath(const char *style)
++{
++	static const char *home_dirs[] = { "/.local/share/fonts", "/.fonts",
++		"/Library/Fonts", NULL };
++	static const char *sys_dirs[] = { "/usr/share/fonts", "/usr/local/share/fonts",
++		"/usr/share/fonts/truetype", "/usr/share/fonts/TTF",
++		"/usr/share/fonts/opentype", NULL };
++	const char *home = getenv("HOME");
++	char path[PATH_MAX];
++	int i;
++
++	if (home) {
++		for (i = 0; home_dirs[i]; i++) {
++			snprintf(path, sizeof path, "%s%s/" FONT_FACE "-%s.ttf",
++					home, home_dirs[i], style);
++			if (access(path, R_OK) == 0)
++				return xstrdup(path);
++		}
++	}
++	for (i = 0; sys_dirs[i]; i++) {
++		snprintf(path, sizeof path, "%s/" FONT_FACE "-%s.ttf", sys_dirs[i], style);
++		if (access(path, R_OK) == 0)
++			return xstrdup(path);
++	}
++	return NULL;
++}
++
++/* Open one exact font file. The pattern carries only FC_FILE and FC_PIXEL_SIZE,
++ * which is all wld_font_open_pattern() reads: no font list, no family matching. */
++static int
++wlloadfontfile(Font *f, const char *path, int type, double px)
++{
++	FcPattern *pat = FcPatternCreate();
++	struct wld_extents extents;
++
++	if (!pat)
++		return 1;
++	FcPatternAddString(pat, FC_FILE, (const FcChar8 *)path);
++	FcPatternAddDouble(pat, FC_PIXEL_SIZE, px);
++	if (!(f->match = wld_font_open_pattern(wld.fontctx, pat, type, (int)px))) {
++		FcPatternDestroy(pat);
++		return 1;
++	}
++	FcPatternDestroy(pat);
++
++	/* keep a family pattern: only used to find a font for glyphs this face
++	 * does not have (emoji, other scripts) */
++	f->set = NULL;
++	f->pattern = FcNameParse((FcChar8 *)font);
++	if (f->pattern) {
++		FcPatternDel(f->pattern, FC_SIZE);
++		FcPatternAddDouble(f->pattern, FC_PIXEL_SIZE, px);
++	}
++
++	wld_font_text_extents(f->match, ascii_printable, &extents);
++	f->ascent = f->match->ascent;
++	f->descent = f->match->descent;
++	f->lbearing = 0;
++	f->rbearing = f->match->max_advance;
++	f->height = f->ascent + f->descent;
++	f->width = DIVCEIL(extents.advance, strlen(ascii_printable));
++	return 0;
++}
++
++/* Load regular/italic/bold/bold-italic straight from files. Returns 0 when the
++ * face is not installed, so the fontconfig path below can take over. */
++static int
++wlloadfontfiles(double fontsize)
++{
++	Font *fonts[] = { &dc.font, &dc.ifont, &dc.ibfont, &dc.bfont };
++	/* wld's fallback font slots: 0 regular, 1 italic, 2 bold, 3 bold-italic */
++	const int types[] = { 0, 1, 3, 2 };
++	char *paths[4];
++	double px = fontsize > 1 ? fontsize : DEFAULTFONTSIZE;
++	int i;
++
++	paths[0] = wlfontpath("Regular");
++	if (!paths[0])
++		return 0;
++	/* Nerd Font releases ship no italic cuts, so those fall back to upright */
++	paths[1] = wlfontpath("Italic");
++	paths[2] = wlfontpath("Bold");
++	paths[3] = wlfontpath("BoldItalic");
++	if (!paths[1]) paths[1] = xstrdup(paths[0]);
++	if (!paths[2]) paths[2] = xstrdup(paths[0]);
++	if (!paths[3]) paths[3] = xstrdup(paths[2]);
++
++	for (i = 0; i < 4; i++) {
++		if (wlloadfontfile(fonts[i], paths[i], types[i], px))
++			die("can't open font %s\n", paths[i]);
++		free(paths[i]);
++	}
++
++	usedfontsize = px;
++	defaultfontsize = px;
++	win.cw = ceilf(dc.font.width * cwscale);
++	win.ch = ceilf(dc.font.height * chscale);
++	return 1;
++}
++#endif // FONT_FACE
++
+ static void wlloadfonts(char *fontstr, double fontsize)
+ {
+ 	FcPattern *pattern=NULL;
+ 	double fontval;
+ 
++	#ifdef FONT_FACE
++	if (!opt_font && wlloadfontfiles(fontsize))
++		return;
++	#endif // FONT_FACE
++
+ 	if (fontstr)
+ 	{
+ 		if (fontstr[0] == '-') {
+@@ -2387,6 +2498,14 @@ static void wldrawCharacter(Glyph g, int x, int y)
+ 		return;
+ 	#endif // KITTY_GRAPHICS_PATCH
+ 
++	#if BOXDRAW_PATCH
++	/* box drawing: draw the shape as rectangles, never through the font */
++	if (g.mode & ATTR_BOXDRAW) {
++		wldrawbox(winx, winy, width, win.ch, fg, bg, boxdrawindex(&g));
++		return;
++	}
++	#endif // BOXDRAW_PATCH
++
+ 	/*
+ 	 * Search for the range in the to be printed string of glyphs
+ 	 * that are in the main font. Then print that range. If
+@@ -3266,8 +3385,14 @@ wlinit(int cols, int rows)
+ 	if (!wl.wm)
+ 		die("Display has no window manager\n");
+ 	if (!wl.decoration_manager) {
++		#if NO_WINDOW_DECORATIONS_PATCH
++		/* dwl draws its own borders: CSD would add a second frame and
++		 * offset the cell grid away from the tile edges */
++		DEBUGPRNT("# Display has no decoration manager, decorations disabled\n");
++		#else
+ 		DEBUGPRNT("# Display has no decoration manager, using CSD\n");
+ 		wl.csd_enabled = true;
++		#endif
+ 	}
+ 
+ 	wl.keyboard = wl_seat_get_keyboard(wl.seat);
+@@ -3292,7 +3417,9 @@ wlinit(int cols, int rows)
+ 	if (!FcInit())
+ 		die("Could not init fontconfig.\n");
+ 
+-	usedfont = opt_font;
++	/* fall back to the configured font: with usedfont == NULL, wlloadfonts()
++	 * never builds a pattern and the embedded fallback font is used instead. */
++	usedfont = opt_font ? opt_font : font;
+ 	wld.fontctx = wld_font_create_context();
+ 	wlloadfonts(usedfont, DEFAULTFONTSIZE);
+ 

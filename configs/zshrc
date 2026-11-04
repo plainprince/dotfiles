@@ -1,0 +1,44 @@
+# zsh config - portable version of the RPi setup.
+# Differences from the original ~/.zshrc: $HOME instead of /home/plainprince,
+# bat/batcat alias detection, no distro-specific paths, and zsh-syntax-highlighting
+# comes only from the omz plugin (sourcing /usr/share/... as well double-loads it).
+
+export ZSH="$HOME/.oh-my-zsh"
+ZSH_THEME="robbyrussell"
+plugins=(git zsh-autosuggestions zsh-syntax-highlighting zoxide starship)
+source "$ZSH/oh-my-zsh.sh"
+
+export PATH="$HOME/.local/bin:$BUN_INSTALL/bin:$PATH"
+export EDITOR="${EDITOR:-vim}"
+
+# homebrew (macOS / Linuxbrew), installed by setup.sh when missing
+if [ -x /opt/homebrew/bin/brew ]; then
+	eval "$(/opt/homebrew/bin/brew shellenv)"
+elif [ -x /usr/local/bin/brew ]; then
+	eval "$(/usr/local/bin/brew shellenv)"
+fi
+
+# nvm
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+
+# bun
+export BUN_INSTALL="$HOME/.bun"
+[ -s "$BUN_INSTALL/_bun" ] && source "$BUN_INSTALL/_bun"
+
+# sdkman (must stay at the end for it to work)
+export SDKMAN_DIR="$HOME/.sdkman"
+[[ -s "$HOME/.sdkman/bin/sdkman-init.sh" ]] && source "$HOME/.sdkman/bin/sdkman-init.sh"
+
+# aliases
+alias ls='eza --git --icons=always'
+alias ll='ls -lahF'
+alias la='ll'
+alias l='la'
+if command -v batcat >/dev/null 2>&1; then
+	alias cat='batcat --style=plain --paging=never' # debian/ubuntu name
+elif command -v bat >/dev/null 2>&1; then
+	alias cat='bat --style=plain --paging=never'
+fi
+alias cmatrix='cmatrix -C white -B'
