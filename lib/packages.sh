@@ -39,7 +39,8 @@ install_dev_tools() {
 	# The compiler/make/pkg-config part is not optional: dwl, dwlb, st-wl and
 	# LazyVim's treesitter parsers all build from source later in this run.
 	info "installing developer tools"
-	# no neovim here: the distro packages are stale, see install_neovim()
+	# no neovim here on purpose: install_neovim() uses the upstream release and
+	# removes any package-managed copy, the package managers are never used for it
 	case $PM in
 	apt) pkg_install git curl wget ca-certificates gnupg build-essential pkg-config file zsh unzip fontconfig gh ripgrep ;;
 	dnf) pkg_install git curl wget ca-certificates gnupg2 gcc gcc-c++ make pkgconf-pkg-config file zsh unzip fontconfig gh ripgrep ;;
@@ -53,30 +54,72 @@ install_dev_tools() {
 	install_neovim
 }
 
-# Neovim from the official release tarball, not the distro package: Debian 13
-# ships 0.10.4, Fedora/Arch lag the same way, and LazyVim tracks the 0.11+/0.12
-# releases. Linux installs to /opt/nvim (override with NVIM_DEST) and links
-# /usr/local/bin/nvim at it, so a distro neovim that is already installed keeps
-# working but never wins on PATH. macOS uses Homebrew, which is the install path
-# upstream documents for macOS.
-install_neovim() {
-	if [ "$PLATFORM" = macos ]; then
-		info "installing neovim (Homebrew)"
-		pkg_install neovim || warn "brew install neovim failed"
-		return 0
-	fi
+# Neovim comes from upstream only. No package manager touches it: the distro
+# packages and the Homebrew formula both lag (Debian 13 ships 0.10.4) while
+# LazyVim tracks 0.11+/0.12. Upstream ships release archives rather than a shell
+# installer, so those archives are what get installed: unpacked into /opt/nvim
+# (override with NVIM_DEST) and linked at /usr/local/bin/nvim.
+#
+# A package-managed neovim is removed - not purged, so its config survives - both
+# so it can never be the binary that answers `nvim` and so the next distro
+# upgrade does not drop half a runtime next to the upstream one.
+NEOVIM_DOWNLOAD=https://github.com/neovim/neovim/releases/latest/download
 
-	local arch
+remove_packaged_neovim() {
+	case $PM in
+	apt)
+		dpkg-query -W -f='${Status}' neovim 2>/dev/null \
+			| grep -q 'install ok installed' || return 0
+		info "removing the packaged neovim (upstream release is used instead)"
+		DEBIAN_FRONTEND=noninteractive root apt-get remove -y neovim \
+			|| warn "could not remove the packaged neovim"
+		;;
+	dnf)
+		rpm -q neovim >/dev/null 2>&1 || return 0
+		info "removing the packaged neovim (upstream release is used instead)"
+		root dnf remove -y neovim || warn "could not remove the packaged neovim"
+		;;
+	zypper)
+		rpm -q neovim >/dev/null 2>&1 || return 0
+		info "removing the packaged neovim (upstream release is used instead)"
+		root zypper --non-interactive remove neovim \
+			|| warn "could not remove the packaged neovim"
+		;;
+	pacman)
+		pacman -Q neovim >/dev/null 2>&1 || return 0
+		info "removing the packaged neovim (upstream release is used instead)"
+		root pacman -R --noconfirm neovim || warn "could not remove the packaged neovim"
+		;;
+	apk)
+		apk info -e neovim >/dev/null 2>&1 || return 0
+		info "removing the packaged neovim (upstream release is used instead)"
+		root apk del neovim || warn "could not remove the packaged neovim"
+		;;
+	brew)
+		brew list --formula neovim >/dev/null 2>&1 || return 0
+		info "removing the Homebrew neovim (upstream release is used instead)"
+		brew uninstall neovim || warn "could not remove the Homebrew neovim"
+		;;
+	esac
+	return 0
+}
+
+install_neovim() {
+	remove_packaged_neovim
+
+	local os arch dest tag have_ver tmp
+
+	if [ "$PLATFORM" = macos ]; then os=macos; else os=linux; fi
 	case $ARCH in
 	aarch64|arm64) arch=arm64 ;;
 	x86_64|amd64) arch=x86_64 ;;
 	*)
-		warn "no official neovim build for $ARCH, keeping the distro package"
+		warn "no official neovim build for $ARCH; install it by hand"
 		return 0
 		;;
 	esac
 
-	local dest=${NVIM_DEST:-/opt/nvim} tag have_ver tmp
+	dest=${NVIM_DEST:-/opt/nvim}
 
 	# releases/latest redirects to /releases/tag/vX.Y.Z - cheaper than the API
 	tag=$(curl -fsSL -o /dev/null -w '%{url_effective}' \
@@ -93,10 +136,9 @@ install_neovim() {
 		info "neovim: upgrading ${have_ver:-unknown} -> $tag"
 	fi
 
-	info "installing neovim ${tag:-latest} (official linux-$arch tarball)"
+	info "installing neovim ${tag:-latest} (official $os-$arch archive)"
 	tmp=$(mktemp -d)
-	if ! curl -fL -o "$tmp/nvim.tar.gz" \
-		"https://github.com/neovim/neovim/releases/latest/download/nvim-linux-$arch.tar.gz"; then
+	if ! curl -fL -o "$tmp/nvim.tar.gz" "$NEOVIM_DOWNLOAD/nvim-$os-$arch.tar.gz"; then
 		rm -rf "$tmp"
 		warn "neovim download failed; leaving the existing install alone"
 		return 0
@@ -105,20 +147,19 @@ install_neovim() {
 	# unpack first, so a bad tarball cannot leave the machine without neovim
 	if ! tar -C "$tmp" -xzf "$tmp/nvim.tar.gz"; then
 		rm -rf "$tmp"
-		warn "neovim tarball did not extract; leaving the existing install alone"
+		warn "neovim archive did not extract; leaving the existing install alone"
 		return 0
 	fi
 	root rm -rf "$dest"
 	root mkdir -p "$(dirname "$dest")"
-	root mv "$tmp/nvim-linux-$arch" "$dest" \
+	root mv "$tmp/nvim-$os-$arch" "$dest" \
 		|| { rm -rf "$tmp"; warn "could not move neovim into $dest"; return 0; }
 	rm -rf "$tmp"
 	link_neovim "$dest"
 }
 
-# nvim sits in /opt, so link it where PATH already looks (/usr/local/bin comes
-# before /usr/bin, which is why an existing distro neovim is shadowed rather
-# than removed). A hand-built nvim in that spot is kept as nvim.bak.
+# nvim sits in /opt, so link it where PATH already looks. A hand-built nvim in
+# that spot is kept as nvim.bak.
 link_neovim() { # <prefix>
 	local bin=/usr/local/bin/nvim
 	if [ -L "$bin" ] && [ "$(readlink "$bin")" = "$1/bin/nvim" ]; then
@@ -273,21 +314,25 @@ install_wayland_pkgs() {
 		libwlroots-0.20-dev libwayland-dev wayland-protocols libxkbcommon-dev libinput-dev \
 		libpixman-1-dev libfontconfig-dev libfreetype-dev libimlib2-dev libfcft-dev zlib1g-dev \
 		libxcb1-dev libxcb-icccm4-dev \
-		swaybg wmenu wlr-randr sddm qt6-wayland weston xwayland ;;
+		libpam0g-dev \
+		swaybg wmenu wlr-randr xwayland ;;
 	dnf) pkg_install_lenient \
 		wlroots-devel wayland-devel wayland-protocols-devel libxkbcommon-devel libinput-devel \
 		pixman-devel fontconfig-devel freetype-devel imlib2-devel fcft-devel zlib-devel \
-		libxcb-devel xcb-util-wm-devel \
-		swaybg wmenu wlr-randr sddm qt6-qtwayland weston xorg-x11-server-Xwayland ;;
+		libxcb-devel xcb-util-wm-devel pam-devel \
+		swaybg wmenu wlr-randr xorg-x11-server-Xwayland ;;
+	# ly is built from source (patched): see lib/session.sh
 	pacman) pkg_install_lenient \
 		wlroots wayland wayland-protocols libxkbcommon libinput pixman fontconfig freetype2 \
 		imlib2 fcft zlib libxcb xcb-util-wm \
-		swaybg wmenu wlr-randr sddm qt6-wayland weston xorg-xwayland ;;
+		swaybg wmenu wlr-randr xorg-xwayland ;;
 	zypper) pkg_install_lenient wlroots-devel wayland-devel libxkbcommon-devel fcft-devel \
 		imlib2-devel pixman-devel fontconfig-devel freetype2-devel libxcb-devel xcb-util-wm-devel \
-		swaybg wmenu wlr-randr sddm weston ;;
+		pam-devel \
+		swaybg wmenu wlr-randr ;;
 	apk) pkg_install_lenient wlroots-dev wayland-dev wayland-protocols libxkbcommon-dev fcft-dev \
 		imlib2-dev pixman-dev fontconfig-dev freetype-dev \
+		linux-pam-dev libxcb-dev \
 		swaybg wmenu wlr-randr ;;
 	esac
 }

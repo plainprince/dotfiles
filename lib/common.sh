@@ -62,7 +62,7 @@ detect_platform() {
 		warn "package steps will be skipped; run setup.sh again afterwards."
 	fi
 	if [ "$PLATFORM" = macos ]; then
-		note "macOS: shell environment only (dwl/dwlb/st-wl/SDDM are Wayland-only)"
+		note "macOS: shell environment only (dwl/dwlb/st-wl/Ly are Wayland/Linux-only)"
 	fi
 }
 
@@ -75,7 +75,7 @@ require_sudo() {
 		return 0
 	fi
 	have sudo || die "sudo is required (or run setup.sh as root)"
-	printf '\n%sPrivileged steps:%s package installs, /usr/local binaries, /etc/sddm.conf.d, systemctl.\n' "$B" "$Z"
+	printf '\n%sPrivileged steps:%s package installs, /usr/local binaries, /etc/ly, systemctl.\n' "$B" "$Z"
 	sudo -v || die "sudo authentication failed"
 	SUDO=sudo
 	# keepalive: refresh the sudo timestamp every 50s while this script lives

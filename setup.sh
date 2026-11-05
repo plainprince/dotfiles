@@ -39,10 +39,13 @@ main() {
 
 	if [ "$PLATFORM" = linux ]; then
 		install_wayland_pkgs
+		# before dwl: its session file must never point at a wrapper that is not
+		# on disk yet
+		install_session_scripts
 		build_suckless
 		install_wayland_session
 	else
-		info "macOS: skipping dwl/dwlb/st-wl and SDDM (Wayland-only stack)"
+		info "macOS: skipping dwl/dwlb/st-wl and Ly (Wayland-only stack)"
 	fi
 
 	install_dotfiles

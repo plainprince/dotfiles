@@ -6,7 +6,20 @@ Wayland-native st fork — pinned to `8650534` (see `lib/suckless.sh`).
 `01-config.patch` contains the whole port:
 
 **Toggles** (`patches.def.h`)
-- `SCROLLBACK_PATCH 1` with `HISTSIZE` 2000 → 5000, `COPYURL_PATCH 1`
+- `SCROLLBACK_PATCH 1` with `HISTSIZE` 2000 → 5000, `SCROLLBACK_MOUSE_PATCH 1` and
+  `SCROLLBACK_MOUSE_ALTSCREEN_PATCH 1`: plain (and Shift+) MouseWheel scrolls the
+  history — no modifier, and no `\e[5;2~` escape pushed into the shell. On the
+  alternate screen the wheel still goes to the application (^Y/^E), which is what
+  scrolls in vim/less/tmux. `COPYURL_PATCH 1`
+- **Wheel direction fixed.** `config.def.h` bound `+1` to `kscrollup`, but a positive
+  `wl_pointer.axis` value is wheel *down* (the fork's own `wlmousereportaxis()`
+  encodes it as SGR button 65), so scrolling up did nothing once the buffer was at
+  the top — the wheel looked dead. The patch swaps `kscrollup`/`kscrolldown` and the
+  alt-screen ^Y/^E pair so wheel up scrolls back, wheel down scrolls forward.
+- `ALPHA_FOCUS_FADE_MS 0` — the fork fades the background from `alpha` to
+  `alphaUnfocused` over 300 ms whenever the window loses keyboard focus. Instant
+  switch instead: `ALPHA_FOCUS_HIGHLIGHT_PATCH` stays enabled, so an unfocused
+  terminal is still drawn at `alphaUnfocused` (0.75), it just does not animate.
 - `BOXDRAW_PATCH 1` — **new**: the fork only ships the X11/Xft `drawboxes()`, so this
   patch adds `patch/boxdraw_wl.c`, a wld-renderer implementation (rectangles via
   `wld_fill_rectangle`, shapes/tables taken from Avi Halachmi's patch), includes it

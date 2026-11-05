@@ -1,0 +1,13 @@
+diff --git a/src/configator.c b/src/configator.c
+index f433350..f3e937b 100644
+--- a/src/configator.c
++++ b/src/configator.c
+@@ -9,7 +9,7 @@
+ static uint16_t search(struct configator_param* config, uint16_t len, char* key)
+ {
+ 	// strcmp indicator
+-	int8_t disc;
++	int disc;
+ 	// initial tested index
+ 	uint16_t i = len / 2;
+ 	// initial bounds (inclusive)

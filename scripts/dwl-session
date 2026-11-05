@@ -1,5 +1,5 @@
 #!/bin/sh
-# SDDM session entry (Exec target of dwl.desktop).
+# dwl session entry (Exec target of dwl.desktop, started by Ly).
 # dwl's -s command does the rest: see dwl-autostart.
 export PATH="$HOME/.local/bin:$PATH"
 export WALLPAPER="${WALLPAPER:-$HOME/Pictures/Wallpapers/himalayan-mountains.png}"
