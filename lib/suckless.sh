@@ -5,7 +5,7 @@
 DWL_REPO=https://codeberg.org/dwl/dwl.git
 DWL_REF=a6e2c155de5daf01f47a726029dc929c4fb8e489
 DWLB_REPO=https://github.com/kolunmi/dwlb.git
-DWLB_REF=48dbe0070f63a58484203b05956ad6944e7a468c
+DWLB_REF=48dbe00bdb98a1ae6a0e60558ce14503616aa759
 STWL_REPO=https://github.com/marchaesen/st-wl.git
 STWL_REF=86505348b5ebf1532229e201e5d782b8ea92266c
 

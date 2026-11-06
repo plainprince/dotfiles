@@ -393,13 +393,13 @@ install_wayland_pkgs() {
 	case $PM in
 	apt) pkg_install_lenient \
 		libwlroots-0.20-dev libwayland-dev wayland-protocols libxkbcommon-dev libinput-dev \
-		libpixman-1-dev libfontconfig-dev libfreetype-dev libimlib2-dev libfcft-dev zlib1g-dev \
+		libpixman-1-dev libfontconfig-dev libfreetype-dev libimlib2-dev libfcft-dev libtllist-dev zlib1g-dev \
 		libxcb1-dev libxcb-icccm4-dev \
 		libpam0g-dev \
 		swaybg wmenu wlr-randr xwayland ;;
 	dnf) pkg_install_lenient \
 		wlroots-devel wayland-devel wayland-protocols-devel libxkbcommon-devel libinput-devel \
-		pixman-devel fontconfig-devel freetype-devel imlib2-devel fcft-devel zlib-devel \
+		pixman-devel fontconfig-devel freetype-devel imlib2-devel fcft-devel tllist-devel zlib-devel \
 		libxcb-devel xcb-util-wm-devel pam-devel \
 		swaybg wmenu wlr-randr xorg-x11-server-Xwayland ;;
 	# ly is built from source (patched): see lib/session.sh
@@ -408,14 +408,14 @@ install_wayland_pkgs() {
 	# versioned AUR results). The versioned name is unambiguous on both managers.
 	pacman) arch_install_lenient \
 		wlroots0.20 wayland wayland-protocols libxkbcommon libinput pixman fontconfig freetype2 \
-		imlib2 fcft zlib libxcb xcb-util-wm \
+		imlib2 fcft tllist zlib libxcb xcb-util-wm \
 		swaybg wmenu wlr-randr xorg-xwayland ;;
 	zypper) pkg_install_lenient wlroots-devel wayland-devel libxkbcommon-devel fcft-devel \
-		imlib2-devel pixman-devel fontconfig-devel freetype2-devel libxcb-devel xcb-util-wm-devel \
+		imlib2-devel pixman-devel fontconfig-devel freetype2-devel tllist-devel libxcb-devel xcb-util-wm-devel \
 		pam-devel \
 		swaybg wmenu wlr-randr ;;
 	apk) pkg_install_lenient wlroots-dev wayland-dev wayland-protocols libxkbcommon-dev fcft-dev \
-		imlib2-dev pixman-dev fontconfig-dev freetype-dev \
+		imlib2-dev pixman-dev fontconfig-dev freetype-dev tllist-dev \
 		linux-pam-dev libxcb-dev \
 		swaybg wmenu wlr-randr ;;
 	esac
