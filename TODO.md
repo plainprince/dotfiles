@@ -273,7 +273,9 @@ wallpapers/           3 files, 16 MB
    packages are too old for LazyVim) and any packaged copy is removed, never
    installed or purged + tracked config; nvm/sdkman/bun stay manual, their zshrc
    blocks are guarded no-ops on a fresh box.
-7. **Nothing existing is destroyed**: configs written only when absent, scripts backed
+7. **Nothing existing is destroyed**: configs written only when absent (starship.toml is
+   the one exception: it is repo design, so a differing copy is saved as `.bak` and
+   replaced, otherwise a config fix never reaches an existing install), scripts backed
    up to `*.bak` when a local copy differs, dirty clones left alone, `st` never
    relinked over a real X11 st, installed packages/tools/shell/brew reused as-is,
    hand-written `config.h` preserved as `config.h.bak`.
