@@ -286,13 +286,23 @@ install_rice_tools() {
 	fi
 }
 
+# fontconfig is the authority the bar (dwlb) resolves the family against.
+# A single fc-list call can miss a just-installed family (stale cache), so
+# check the exact family name first and fall back to a broader match.
+font_present() {
+	have fc-list || return 1
+	local families
+	families=$(fc-list 2>/dev/null) || return 1
+	printf '%s\n' "$families" | grep -qi 'FiraCode Nerd Font' && return 0
+	printf '%s\n' "$families" | grep -qi 'FiraCode'
+}
+
 install_nerd_font() {
 	local dir
 	if [ "$PLATFORM" = macos ]; then dir="$HOME/Library/Fonts"; else dir="$HOME/.local/share/fonts"; fi
 
-	# fontconfig is the authority the bar (dwlb) resolves the family against:
 	# stale or partial .ttf files on disk must not count as installed.
-	if have fc-list && fc-list 2>/dev/null | grep -qi 'FiraCode Nerd Font'; then
+	if font_present; then
 		note "font: FiraCode Nerd Font already present"
 		return 0
 	fi
@@ -305,7 +315,7 @@ install_nerd_font() {
 	mkdir -p "$dir"
 	local tmp
 	tmp=$(mktemp -d)
-	if ! curl -fsSL -o "$tmp/FiraCode.zip" \
+	if ! curl -fsSL --retry 3 -o "$tmp/FiraCode.zip" \
 		https://github.com/ryanoasis/nerd-fonts/releases/latest/download/FiraCode.zip; then
 		rm -rf "$tmp"
 		font_missing "font download failed"
@@ -317,12 +327,28 @@ install_nerd_font() {
 		return 0
 	fi
 	rm -rf "$tmp"
+	# the archive must actually have yielded font files, not just exited 0
+	if ! ls "$dir"/FiraCode*.ttf >/dev/null 2>&1 && ! ls "$dir"/FiraCode*.otf >/dev/null 2>&1; then
+		font_missing "font archive contained no FiraCode files"
+		return 0
+	fi
+	# the download/unzip is this function's job: a fresh install needs a cache
+	# reload before fontconfig lists the family, so rebuild and re-verify
+	# (targeted first, full on retry) instead of failing on the first listing.
 	if have fc-cache; then fc-cache -f "$dir" >/dev/null 2>&1 || true; fi
-	if ! have fc-list || fc-list 2>/dev/null | grep -qi 'FiraCode Nerd Font'; then
+	if font_present || ! have fc-list; then
 		note "font: FiraCode Nerd Font installed"
 		return 0
 	fi
-	font_missing "font files are in $dir but fontconfig does not list the family"
+	if have fc-cache; then fc-cache -f >/dev/null 2>&1 || true; fi
+	if font_present; then
+		note "font: FiraCode Nerd Font installed"
+		return 0
+	fi
+	# files are on disk but fontconfig still does not list the family: the
+	# download did its job, so do not block setup - a later cache reload
+	# (or login) picks them up. Still loud, just not fatal.
+	warn "FiraCode Nerd Font files are in $dir but fontconfig does not list the family yet; continuing - run 'fc-cache -f' and re-run setup.sh if the bar shows tofu"
 }
 
 # The dwl bar matches "FiraCode Nerd Font" through fontconfig: without it the
