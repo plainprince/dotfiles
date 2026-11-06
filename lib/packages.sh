@@ -31,6 +31,84 @@ ensure_homebrew() {
 	note "homebrew: $(brew --version | head -1)"
 }
 
+# Arch only: make sure an AUR helper exists. When neither paru nor yay is
+# installed, build paru from the AUR the manual way:
+#   git clone https://aur.archlinux.org/paru.git, cd paru, makepkg -si
+ensure_aur_helper() {
+	[ "$PM" = pacman ] || return 0
+	if have paru || have yay; then return 0; fi
+
+	info "installing paru (AUR helper)"
+	# makepkg refuses to run as root, so a root-only shell cannot build.
+	if [ "$(id -u)" -eq 0 ] && [ -z "${SUDO_USER:-}" ]; then
+		warn "running as root: makepkg refuses root builds; install paru manually"
+		return 1
+	fi
+
+	# paru builds with cargo and needs the base toolchain + git
+	pkg_install git base-devel rust || warn "paru build deps failed to install"
+
+	if [ "$(id -u)" -eq 0 ]; then
+		# root via sudo: build as the invoking user, install step still uses sudo
+		local tmp
+		tmp=$(sudo -u "$SUDO_USER" mktemp -d) || return 1
+		sudo -u "$SUDO_USER" git clone --quiet https://aur.archlinux.org/paru.git "$tmp/paru" \
+			|| { warn "paru clone failed"; rm -rf "$tmp"; return 1; }
+		if ! (cd "$tmp/paru" && sudo -u "$SUDO_USER" makepkg -si --noconfirm); then
+			rm -rf "$tmp"
+			warn "paru build failed"
+			return 1
+		fi
+		rm -rf "$tmp"
+	else
+		local tmp
+		tmp=$(mktemp -d) || return 1
+		if ! git clone --quiet https://aur.archlinux.org/paru.git "$tmp/paru"; then
+			rm -rf "$tmp"
+			warn "paru clone failed"
+			return 1
+		fi
+		if ! (cd "$tmp/paru" && makepkg -si --noconfirm); then
+			rm -rf "$tmp"
+			warn "paru build failed"
+			return 1
+		fi
+		rm -rf "$tmp"
+	fi
+
+	if have paru || have yay; then
+		note "AUR helper: $(have paru && echo paru || echo yay)"
+		return 0
+	fi
+	warn "no AUR helper after paru build"
+	return 1
+}
+
+# Install via whichever AUR helper exists (paru preferred, yay as fallback).
+# Never wrapped in root/sudo: the helpers escalate themselves for -S.
+aur_install() {
+	[ $# -eq 0 ] && return 0
+	if have paru; then paru -S --noconfirm --needed "$@"
+	elif have yay; then yay -S --noconfirm --needed "$@"
+	else warn "no AUR helper (paru/yay) to install: $*"; return 1
+	fi
+}
+
+# Arch: try pacman first, then the AUR helper. A package missing from one
+# manager is retried on the other instead of failing the run. Always returns
+# 0; unresolvable packages are reported as warnings like pkg_install_lenient.
+arch_install_lenient() {
+	[ $# -eq 0 ] && return 0
+	if pkg_install "$@"; then return 0; fi
+	warn "pacman batch failed, retrying one at a time (pacman, then AUR)"
+	ensure_aur_helper || true
+	local p
+	for p in "$@"; do
+		pkg_install "$p" || aur_install "$p" || warn "not available here, skipping: $p"
+	done
+	return 0
+}
+
 install_dev_tools() {
 	if [ "$PLATFORM" = macos ] && ! xcode-select -p >/dev/null 2>&1; then
 		die "Xcode command line tools missing: run 'xcode-select --install' first"
@@ -154,7 +232,11 @@ install_rust() {
 
 install_rice_tools() {
 	info "installing shell/rice tools"
-	pkg_install_lenient bat eza starship zoxide btop cava cmatrix fastfetch
+	if [ "$PM" = pacman ]; then
+		arch_install_lenient bat eza starship zoxide btop cava cmatrix fastfetch
+	else
+		pkg_install_lenient bat eza starship zoxide btop cava cmatrix fastfetch
+	fi
 
 	# starship is not packaged on every distro (e.g. Fedora) -> official installer
 	if ! have starship; then
@@ -206,7 +288,7 @@ ensure_browser() {
 	case $PM in
 	apt) pkg_install chromium || pkg_install firefox-esr ;;
 	dnf) pkg_install chromium || pkg_install firefox ;;
-	pacman) pkg_install chromium || pkg_install firefox ;;
+	pacman) pkg_install chromium || pkg_install firefox || { ensure_aur_helper || true; aur_install chromium || aur_install firefox || true; } ;;
 	*) pkg_install chromium || pkg_install firefox ;;
 	esac
 	for b in firefox firefox-esr chromium chromium-browser google-chrome librewolf; do
@@ -252,10 +334,9 @@ REPO
 		pkg_install codium || warn "codium install failed"
 		;;
 	pacman)
-		if have yay; then yay -S --noconfirm vscodium-bin
-		elif have paru; then paru -S --noconfirm vscodium-bin
-		else warn "VSCodium is AUR-only here: 'yay -S vscodium-bin'"
-		fi
+		# VSCodium is AUR-only on Arch: bootstrap the helper, then install.
+		ensure_aur_helper || true
+		aur_install vscodium-bin || warn "VSCodium is AUR-only here: 'paru -S vscodium-bin' (or yay)"
 		;;
 	brew) brew install --cask vscodium || warn "vscodium cask failed" ;;
 	*)
@@ -279,8 +360,11 @@ install_wayland_pkgs() {
 		pixman-devel fontconfig-devel freetype-devel imlib2-devel fcft-devel zlib-devel \
 		libxcb-devel xcb-util-wm-devel \
 		swaybg wmenu wlr-randr sddm qt6-qtwayland weston xorg-x11-server-Xwayland ;;
-	pacman) pkg_install_lenient \
-		wlroots wayland wayland-protocols libxkbcommon libinput pixman fontconfig freetype2 \
+	# NOTE: the 0.20 library is the versioned 'wlroots0.20' package, not
+	# 'wlroots' (which tracks the latest major and, via paru, matches several
+	# versioned AUR results). The versioned name is unambiguous on both managers.
+	pacman) arch_install_lenient \
+		wlroots0.20 wayland wayland-protocols libxkbcommon libinput pixman fontconfig freetype2 \
 		imlib2 fcft zlib libxcb xcb-util-wm \
 		swaybg wmenu wlr-randr sddm qt6-wayland weston xorg-xwayland ;;
 	zypper) pkg_install_lenient wlroots-devel wayland-devel libxkbcommon-devel fcft-devel \

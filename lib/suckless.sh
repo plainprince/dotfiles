@@ -79,7 +79,7 @@ build_suckless() {
 	sync_generated "$HOME/dwl"
 	pkg-config --exists wlroots-0.20 || die "wlroots-0.20 not found via pkg-config.
      dwl's pinned commit needs wlroots 0.20:
-       debian: libwlroots-0.20-dev   fedora: wlroots-devel   arch: wlroots"
+       debian: libwlroots-0.20-dev   fedora: wlroots-devel   arch: wlroots0.20"
 	make -C "$HOME/dwl" || die "dwl build failed"
 	root make -C "$HOME/dwl" install
 
