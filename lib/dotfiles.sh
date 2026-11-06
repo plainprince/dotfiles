@@ -82,9 +82,41 @@ install_wallpapers() {
 	note "wallpapers -> $dest"
 }
 
+# starship throws away the *whole* config when a single value is invalid (an
+# unknown os.symbols variant, a typo'd key, ...) and then warns on every prompt,
+# so what we ship is checked and an installed copy that no longer loads is
+# repaired (kept as .bak) instead of silently left broken.
+starship_accepts() { # <config file>
+	have starship || return 0
+	# config errors are only logged to stderr, the exit status stays 0
+	! STARSHIP_CONFIG="$1" starship prompt 2>&1 1>/dev/null | grep -q 'Failed to load config'
+}
+
+# The prompt is repo design (unlike zshrc/nvim, nothing here is machine specific),
+# so a differing local copy is kept as .bak and replaced: otherwise a fixed
+# starship.toml never reaches a machine that already has the broken one.
+install_starship_config() {
+	local src="$REPO_ROOT/configs/starship.toml"
+	local dest="$HOME/.config/starship.toml"
+	if [ -e "$dest" ] && ! cmp -s "$src" "$dest"; then
+		cp "$dest" "$dest.bak"
+		note "existing $dest saved as $dest.bak"
+		cp "$src" "$dest"
+		info "updated $dest"
+	elif [ ! -e "$dest" ]; then
+		mkdir -p "$(dirname "$dest")"
+		cp "$src" "$dest"
+		info "installed $dest"
+	else
+		note "keeping existing $dest"
+	fi
+	starship_accepts "$dest" \
+		|| warn "starship cannot load $dest - the prompt falls back to its defaults"
+}
+
 install_dotfiles() {
 	info "installing configs"
-	install_config "$REPO_ROOT/configs/starship.toml" "$HOME/.config/starship.toml"
+	install_starship_config
 	install_config "$REPO_ROOT/configs/cava/config" "$HOME/.config/cava/config"
 	install_config "$REPO_ROOT/configs/btop/btop.conf" "$HOME/.config/btop/btop.conf"
 	install_btop_theme

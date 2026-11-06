@@ -30,8 +30,13 @@ clone_pinned() { # <repo> <ref> <dir>
 
 # Applies every patch in <patchdir> idempotently. A patch that does not apply is
 # a hard failure: fix the patch, never skip it.
+#
+# A clone reused from an earlier run still carries the *old* revision of a patch,
+# so neither the reverse check (new hunks are not in the tree yet) nor the plain
+# forward check (old hunks are already applied) passes. Those cases are merged
+# three-way against the pinned commit instead of aborting the whole run.
 apply_patches() { # <dir> <patchdir>
-	local dir=$1 pdir=$2 p
+	local dir=$1 pdir=$2 p files
 	[ -d "$pdir" ] || return 0
 	shopt -s nullglob
 	for p in "$pdir"/*.patch; do
@@ -41,9 +46,22 @@ apply_patches() { # <dir> <patchdir>
 			git -C "$dir" apply "$p" || die "could not apply $p"
 			info "applied: $(basename "$p")"
 		else
-			shopt -u nullglob
-			die "patch does not apply: $p
-     Rebase/fix the patch onto $(git -C "$dir" rev-parse --short HEAD) and commit the fixed patch."
+			files=$(git -C "$dir" apply --numstat "$p" | cut -f3-)
+			# git apply --3way needs the index to match these files, so stage them
+			# (path list from the patch: never the build artefacts).
+			# shellcheck disable=SC2086
+			git -C "$dir" add -- $files >/dev/null 2>&1 || true
+			if git -C "$dir" apply --3way "$p" >/dev/null 2>&1; then
+				info "merged: $(basename "$p") (clone held an older revision)"
+			else
+				# leave the tree as it was, not with conflict markers in it
+				# shellcheck disable=SC2086
+				git -C "$dir" checkout -- $files >/dev/null 2>&1 || true
+				shopt -u nullglob
+				die "patch does not apply: $p
+     Rebase/fix the patch onto $(git -C "$dir" rev-parse --short HEAD) and commit the fixed patch.
+     If $dir holds local edits, move them aside and re-run."
+			fi
 		fi
 	done
 	shopt -u nullglob
@@ -82,6 +100,10 @@ build_suckless() {
        debian: libwlroots-0.20-dev   fedora: wlroots-devel   arch: wlroots0.20"
 	make -C "$HOME/dwl" || die "dwl build failed"
 	root make -C "$HOME/dwl" install
+	# dwl's install rewrites its session file to a plain `Exec=dwl`; point it back
+	# at our wrapper here, not only in install_wayland_session(), or a failure in
+	# any later build step leaves the session without bar, wallpaper and status.
+	point_session_at_wrapper
 
 	info "dwlb"
 	clone_pinned "$DWLB_REPO" "$DWLB_REF" "$HOME/dwlb"
