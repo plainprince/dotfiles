@@ -3,4 +3,36 @@
 # dwl's -s command does the rest: see dwl-autostart.
 export PATH="$HOME/.local/bin:$PATH"
 export WALLPAPER="${WALLPAPER:-$HOME/Pictures/Wallpapers/himalayan-mountains.png}"
+
+# True when this machine is a QEMU/KVM guest. systemd knows directly when it
+# is around; otherwise the DMI vendor strings (plain QEMU reports "QEMU" as
+# the system vendor) and QEMU's own CPU model name in /proc/cpuinfo say so.
+# All sources are optional: missing files or tools just mean "not detected".
+is_qemu_guest() {
+	if command -v systemd-detect-virt >/dev/null 2>&1; then
+		case "$(systemd-detect-virt 2>/dev/null)" in
+		qemu | kvm) return 0 ;;
+		esac
+	fi
+	f=
+	for f in /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/board_vendor \
+		/sys/class/dmi/id/product_name; do
+		if [ -r "$f" ] && grep -qi -e qemu -e kvm "$f" 2>/dev/null; then
+			return 0
+		fi
+	done
+	if grep -qi -e 'QEMU Virtual CPU' /proc/cpuinfo 2>/dev/null; then
+		return 0
+	fi
+	return 1
+}
+
+# QEMU's emulated cursor plane is buggy wherever it shows up (flicker, a frame
+# of lag, or no pointer at all), so inside a guest wlroots draws the cursor in
+# software instead. Only the default is filled in: an explicit setting,
+# including =0, is left alone. (Upstream name is plural: WLR_NO_HARDWARE_CURSORS.)
+if [ -z "${WLR_NO_HARDWARE_CURSORS:-}" ] && is_qemu_guest; then
+	export WLR_NO_HARDWARE_CURSORS=1
+fi
+
 exec dwl -s "$HOME/.local/bin/dwl-autostart"

@@ -3,12 +3,12 @@
 # CPU/RAM come from /proc, disk from stat(1), no X11 needed.
 set -uo pipefail
 
-ic_cpu=$'\uf4bc'
-ic_ram=$'\uefc5'
-ic_disk=$'\uf0c7'
-ic_net=$'\U000f0a5f'
-ic_key=$'\uf11c'
-ic_time=$'\ue384'
+ic_cpu=''
+ic_ram=''
+ic_disk=''
+ic_net='󰩟'
+ic_key=''
+ic_time=''
 
 # --- cpu: busy delta over total delta across one interval -------------------
 read -r _ cu cn cs ci cw cirq csirq _rest < /proc/stat || true

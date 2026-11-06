@@ -290,9 +290,14 @@ install_nerd_font() {
 	local dir
 	if [ "$PLATFORM" = macos ]; then dir="$HOME/Library/Fonts"; else dir="$HOME/.local/share/fonts"; fi
 
-	if ls "$dir"/FiraCodeNerdFont*.ttf >/dev/null 2>&1 \
-		|| fc-list 2>/dev/null | grep -qi 'FiraCode Nerd Font'; then
+	# fontconfig is the authority the bar (dwlb) resolves the family against:
+	# stale or partial .ttf files on disk must not count as installed.
+	if have fc-list && fc-list 2>/dev/null | grep -qi 'FiraCode Nerd Font'; then
 		note "font: FiraCode Nerd Font already present"
+		return 0
+	fi
+	if ! have fc-list && ls "$dir"/FiraCodeNerdFont*.ttf >/dev/null 2>&1; then
+		note "font: FiraCode Nerd Font files already present (no fc-list to verify)"
 		return 0
 	fi
 
@@ -302,13 +307,34 @@ install_nerd_font() {
 	tmp=$(mktemp -d)
 	if ! curl -fsSL -o "$tmp/FiraCode.zip" \
 		https://github.com/ryanoasis/nerd-fonts/releases/latest/download/FiraCode.zip; then
-		warn "font download failed; the bar and terminal will use a fallback font"
 		rm -rf "$tmp"
+		font_missing "font download failed"
 		return 0
 	fi
-	unzip -qo "$tmp/FiraCode.zip" -d "$dir" || warn "font unzip failed"
+	if ! unzip -qo "$tmp/FiraCode.zip" -d "$dir"; then
+		rm -rf "$tmp"
+		font_missing "font unzip failed"
+		return 0
+	fi
 	rm -rf "$tmp"
-	if [ "$PLATFORM" = linux ] && have fc-cache; then fc-cache -f >/dev/null 2>&1 || true; fi
+	if have fc-cache; then fc-cache -f "$dir" >/dev/null 2>&1 || true; fi
+	if ! have fc-list || fc-list 2>/dev/null | grep -qi 'FiraCode Nerd Font'; then
+		note "font: FiraCode Nerd Font installed"
+		return 0
+	fi
+	font_missing "font files are in $dir but fontconfig does not list the family"
+}
+
+# The dwl bar matches "FiraCode Nerd Font" through fontconfig: without it the
+# status icons render as tofu. Loud on Linux (the bar is core to the rice),
+# a warning on macOS (only the terminal/prompt wants it, and that font is
+# picked in the terminal's own settings).
+font_missing() { # <reason>
+	if [ "$PLATFORM" = linux ]; then
+		die "FiraCode Nerd Font unavailable ($1); the bar would show tofu. Fix the download/unzip and re-run."
+	else
+		warn "FiraCode Nerd Font unavailable ($1); continuing without it"
+	fi
 }
 
 ensure_browser() {
