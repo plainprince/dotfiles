@@ -4,23 +4,36 @@
 export PATH="$HOME/.local/bin:$PATH"
 export WALLPAPER="${WALLPAPER:-$HOME/Pictures/Wallpapers/himalayan-mountains.png}"
 
-# True when this machine is a QEMU/KVM guest. systemd knows directly when it
-# is around; otherwise the DMI vendor strings (plain QEMU reports "QEMU" as
-# the system vendor) and QEMU's own CPU model name in /proc/cpuinfo say so.
-# All sources are optional: missing files or tools just mean "not detected".
+# True when this machine is a QEMU/KVM guest. systemd answers directly when it
+# is around, but Artix's inits do not ship systemd-detect-virt, so the fallbacks
+# have to carry this on their own. Each one covers a case the others miss:
+#
+#   DMI      SMBIOS strings (QEMU/libvirt write "QEMU"/"KVM" into them) - x86,
+#            and aarch64 when it boots through UEFI. Any id file, not just the
+#            three that usually match.
+#   fw_cfg   QEMU's firmware config device, /sys/firmware/qemu_fw_cfg - provided
+#            by both the x86 and the aarch64 machine, so it is the one signal
+#            that does not depend on firmware or ACPI.
+#   DT       aarch64 guests booted from a device tree (no ACPI, so no DMI at
+#            all) carry QEMU's "linux,dummy-virt" compatible string.
+#   cpuinfo  TCG guests (no KVM) name QEMU's CPU model there.
+#
+# All sources are optional: a missing file or tool just means "not detected".
 is_qemu_guest() {
 	if command -v systemd-detect-virt >/dev/null 2>&1; then
 		case "$(systemd-detect-virt 2>/dev/null)" in
 		qemu | kvm) return 0 ;;
 		esac
 	fi
-	f=
-	for f in /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/board_vendor \
-		/sys/class/dmi/id/product_name; do
-		if [ -r "$f" ] && grep -qi -e qemu -e kvm "$f" 2>/dev/null; then
-			return 0
-		fi
-	done
+	if [ -d /sys/firmware/qemu_fw_cfg ]; then
+		return 0
+	fi
+	if grep -rqi -e qemu -e kvm /sys/class/dmi/id 2>/dev/null; then
+		return 0
+	fi
+	if grep -aqi -e dummy-virt -e qemu /proc/device-tree/compatible 2>/dev/null; then
+		return 0
+	fi
 	if grep -qi -e 'QEMU Virtual CPU' /proc/cpuinfo 2>/dev/null; then
 		return 0
 	fi

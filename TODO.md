@@ -312,6 +312,17 @@ wallpapers/           3 files, 16 MB
       other three inits and by refreshing the unit/VT on every run. Reproduced from the
       source (`src/utils.c`, `src/main.c`, `res/ly.service`'s `TTYPath=/dev/tty2`) and
       the behaviour reported for Artix `ly-dinit` on the forum.
+- [x] **The QEMU cursor workaround only fired on systemd installs.** `dwl-session`
+      asked `systemd-detect-virt` first and otherwise looked at three SMBIOS files and
+      one exact CPU model string, so on Artix (no systemd-detect-virt) any guest that
+      reports itself through fw_cfg, through a DMI field outside those three
+      (`bios_vendor`, ...) or through a device tree kept hardware cursors - and QEMU's
+      cursor plane is exactly what that workaround is for. Detection now also accepts
+      `/sys/firmware/qemu_fw_cfg` (arch/firmware independent), any file under
+      `/sys/class/dmi/id`, and `dummy-virt` in `/proc/device-tree/compatible`.
+      Verified with fake sysfs trees in a container: the three new signals are
+      detected and the old script misses them, a Dell/Q35 DMI stays "not a guest",
+      and an explicit `WLR_NO_HARDWARE_CURSORS=0` is still left alone.
 - [ ] Artix VM per init (OpenRC, runit, s6, dinit): setup run, Ly on tty7 starting dwl,
       `sddm` retired, greeter survives a reboot.
 - [ ] Full `./setup.sh` on a fresh VM (sudo installs + gh login need a human).
