@@ -18,6 +18,7 @@ never a copy of any codebase.
 | Debian/Ubuntu (apt) | ✅ | ✅ | ✅ |
 | Fedora (dnf) | ✅ | ✅ (needs wlroots 0.20) | ✅ |
 | Arch (pacman) | ✅ | ✅ (needs wlroots 0.20) | ✅ |
+| Artix (pacman, OpenRC/runit/s6/dinit) | ✅ | ✅ (needs wlroots 0.20) | ✅ (Ly on tty7, per-init service) |
 | other Linux | best effort (`pkg_install_lenient`) | if deps resolve | if ly installs/builds |
 | macOS (brew) | ✅ (installs Homebrew if absent) | — (Wayland-only) | — |
 
@@ -30,10 +31,10 @@ dwl, dwlb, st-wl *and* LazyVim's treesitter parsers all compile later in the run
 
 ```
 setup.sh              entrypoint: detect → sudo → stages
-lib/common.sh         logging, platform/PM detection, sudo keepalive, pkg wrappers
+lib/common.sh         logging, platform/PM/init detection, sudo keepalive, pkg wrappers
 lib/packages.sh       per-PM package sets, fonts, VSCodium, Wayland/build deps
 lib/suckless.sh       pinned clones, patch engine, config.h sync, build+install
-lib/session.sh        Ly install/enable, dwl session entry, status feeder install
+lib/session.sh        Ly build/service per init, dwl session entry, status feeder install
 lib/dotfiles.sh       configs (never clobber), omz, nvim, wallpapers, login shell
 lib/github.sh         gh auth login, setup-git, git identity
 scripts/status.sh     slstatus replacement (1 line/s)
@@ -69,6 +70,10 @@ wallpapers/           3 files, 16 MB
       libinput, pixman, fontconfig, freetype, imlib2, fcft, zlib, xcb + xcb-icccm
       (for XWayland), swaybg/wmenu/wlr-randr/xwayland, plus pam/xcb headers for
       Ly when it has to be built from source.
+- [x] **Artix**: same package names as Arch (pacman → AUR), including the versioned
+      `wlroots0.20`. Artix packages neither `wmenu` nor an AUR copy, so `bemenu` is
+      installed instead and `~/.local/bin/wmenu-run` execs `bemenu-run` — dwl's menu
+      bind and its config are untouched.
 - [x] **Suckless**: clone pinned → apply patches → refresh `config.h` → build+install;
       `st` symlink only when no real X11 `st` exists.
 - [x] **macOS**: Homebrew installed when absent (non-interactive, Xcode CLT gate) and
@@ -81,6 +86,26 @@ wallpapers/           3 files, 16 MB
       on the first pointer movement, so the box boots into Ly on tty2 instead.
       `install_wayland_session()` deletes `/etc/sddm.conf.d/10-wayland.conf`, disables
       `sddm` (package kept) and enables `ly.service`.
+- [x] **Artix: the same steps, in the init that is actually running.** `detect_init()`
+      (in `lib/common.sh`, which also logs `init:` next to the distro) tells systemd from
+      OpenRC, runit, s6 and dinit via `/run/systemd/system` and `/proc/1/comm`, with an
+      installed-program fallback for chroots; 66 is detected but reported unsupported.
+      `enable_ly_systemd()` keeps the old path; `enable_ly_init()` retires `sddm` by
+      service name (the name is identical in every init's package; the package stays)
+      and enables Ly the way each init records it:
+      `rc-update add ly default`, a symlink into `/run/runit/service` (the live dir that
+      Artix points at `/etc/runit/runsvdir/default`), a `/etc/dinit.d/boot.d/ly` symlink
+      (never `dinitctl enable`, which would start the greeter mid-setup), and
+      `/etc/s6/adminsv/default/contents.d/ly` + `s6-db-reload`. dwl needs a seat, so
+      a missing `loginctl`/`seatd` is reported with Artix's per-init package names
+      (`elogind-$INIT`, `seatd-$INIT`) instead of being installed silently.
+- [x] **Service files come from the build, not from Artix's packages.** systemd and
+      OpenRC use upstream's targets (`make installsystemd|installopenrc`), runit takes
+      Ly's own `res/ly-runit-service` into `/etc/runit/sv/ly` (upstream's `installrunit`
+      writes `/etc/sv`, which Artix does not use), and dinit/s6 get a definition from
+      this repo (`/etc/dinit.d/ly`, `/etc/s6/sv/ly/{type,run}` + `/etc/s6/config/ly.conf`)
+      modelled on Artix's `ly-dinit` and `s6-services`. All of them point at
+      `/usr/bin/ly` — the source build — never at a packaged `ly-dm`.
 - [x] **Ly is always built from source** at the pinned `v0.6.0` tag (git +
       submodules, `make installnoconf`, `make installsystemd`), never from a distro
       package: Ly 1.x needs Zig and a packaged 0.6.x would be unpatched. An existing
@@ -108,6 +133,12 @@ wallpapers/           3 files, 16 MB
       greeters read `/usr/share/wayland-sessions`, so the latter is a symlink to the
       former (never clobbering an existing file). `set-default graphical.target`;
       `getty@tty2` disabled because Ly owns tty2.
+- [x] **The VT differs by init.** Ly 0.6.0 activates the VT named in its own config.
+      systemd keeps `tty = 2` and disables `getty@tty2`; Artix's inits all keep gettys
+      on tty1-6 and cannot spare a single one (dinit starts them from `console.conf`,
+      s6 from a tty count), so `set_ly_tty()` writes `tty = 7` into `/etc/ly/config.ini`
+      there and no getty is touched. OpenRC's and runit's Ly scripts read that same key,
+      so all four inits agree on tty7 without extra configuration.
 
 ## Phase 3 — DWL with dwm's config/binds ✅
 
@@ -254,6 +285,16 @@ wallpapers/           3 files, 16 MB
       against a temp save file and session dir (rewrites the index, idempotent).
 - [x] st-wl patch re-applied to a pristine clone of the pinned commit; font pattern
       resolution checked against libfontconfig (see Phase 4).
+- [x] Artix wiring checked against the sources it imitates: Ly's own `res/ly-*` and
+      `makefile` targets, Artix's `ly-dinit`/`ly-runit`/`ly-openrc` packages and
+      `s6-services` `install.sh` (which flattens `srv/ly/ly/*` into `/etc/s6/sv/ly/*`,
+      matching this repo's layout). Package names verified in the Artix repos
+      (`wlroots0.20`, `bemenu`, `wlr-randr`, `github-cli`, `pam`); `wmenu` is absent
+      from both Artix and the AUR. `bash -n` clean on every script. Rendered service
+      files, `ly_tty`/`set_ly_tty` and the tty7 hand-off are still **untested on real
+      Artix hardware** (all four inits listed below as VM checks).
+- [ ] Artix VM per init (OpenRC, runit, s6, dinit): setup run, Ly on tty7 starting dwl,
+      `sddm` retired, greeter survives a reboot.
 - [ ] Full `./setup.sh` on a fresh VM (sudo installs + gh login need a human).
 - [ ] Recommended after first login: set the panel resolution/refresh with
       `wlr-randr` (`wlr-randr --output HDMI-A-1 --mode 1920x1080@60Hz`), then scale
@@ -280,3 +321,7 @@ wallpapers/           3 files, 16 MB
    relinked over a real X11 st, installed packages/tools/shell/brew reused as-is,
    hand-written `config.h` preserved as `config.h.bak`.
 8. **starship**: keep the original layout, only black/white + one line.
+9. **Artix**: the distribution is treated as Arch minus systemd, so `pacman` → AUR
+   stays the package path and the repo keeps no per-init package tables. Only the
+   display-manager step is init-aware; 66 is detected and warned about rather than
+   half-supported.

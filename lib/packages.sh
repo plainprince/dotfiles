@@ -458,10 +458,18 @@ install_wayland_pkgs() {
 	# NOTE: the 0.20 library is the versioned 'wlroots0.20' package, not
 	# 'wlroots' (which tracks the latest major and, via paru, matches several
 	# versioned AUR results). The versioned name is unambiguous on both managers.
-	pacman) arch_install_lenient \
-		wlroots0.20 wayland wayland-protocols libxkbcommon libinput pixman fontconfig freetype2 \
-		imlib2 fcft tllist zlib libxcb xcb-util-wm \
-		swaybg wmenu wlr-randr xorg-xwayland ;;
+	pacman)
+		# Applies to Arch and to Artix, which is Arch's package names without
+		# systemd. pam is in Arch's base but is named explicitly for ly's build.
+		local menu=wmenu
+		# Artix packages neither wmenu nor an AUR equivalent: bemenu speaks the
+		# same dmenu protocol and stands in behind a wmenu-run shim.
+		if [ "$DISTRO" = artix ]; then menu=bemenu; fi
+		arch_install_lenient \
+			wlroots0.20 wayland wayland-protocols libxkbcommon libinput pixman fontconfig freetype2 \
+			imlib2 fcft tllist zlib libxcb xcb-util-wm pam \
+			swaybg "$menu" wlr-randr xorg-xwayland
+		;;
 	zypper) pkg_install_lenient wlroots-devel wayland-devel libxkbcommon-devel fcft-devel \
 		imlib2-devel pixman-devel fontconfig-devel freetype2-devel tllist-devel libxcb-devel xcb-util-wm-devel \
 		pam-devel \
