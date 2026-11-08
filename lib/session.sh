@@ -20,8 +20,16 @@ LY_REF=v0.6.0
 
 # Artix's inits all keep gettys on tty1-6 (dinit lists them in console.conf,
 # OpenRC, runit and s6 ship tty1-6 units), so the VT Ly may own there is tty7.
-# It is written into Ly's config because v0.6.0 activates that VT itself;
 # systemd keeps tty2 and disables getty@tty2 instead.
+#
+# Two things have to agree, and only one of them is the config option: Ly draws
+# on the terminal it was started on, while `tty` in config.ini is only the VT it
+# calls VT_ACTIVATE on afterwards (utils.c: switch_tty). So Ly must be *started*
+# on tty7 - upstream does that with plain `agetty -nl /usr/bin/ly tty7`, which
+# opens the VT and execs the greeter on it. A bare `ly` from an init inherits
+# the console (tty1, where a getty runs) and then jumps the console to an
+# undrawn tty7: a blank screen with a cursor and the greeter hidden underneath
+# the login prompt.
 LY_INIT_TTY=7
 
 install_session_scripts() {
@@ -229,8 +237,11 @@ install_ly_runit() { # <ly checkout>
 	note "ly: runit service $dst"
 }
 
-# Artix's ly-dinit runs ly directly with the console shared with the gettys and
-# starts after login.target; the binary here is our source build.
+# Same shape as Artix's agetty-* services: agetty opens the tty and execs the
+# greeter on it. Starting /usr/bin/ly straight from dinit (as Artix's ly-dinit
+# does) hands it dinit's console - tty1, with a getty - and Ly only switches the
+# console to the tty from config.ini, so the greeter ends up drawn under the
+# tty1 login prompt while the console sits on a blank VT.
 install_ly_dinit() {
 	if [ ! -d /etc/dinit.d ]; then
 		warn "dinit: /etc/dinit.d is missing, no ly service installed"
@@ -238,15 +249,16 @@ install_ly_dinit() {
 	fi
 	local tmp
 	tmp=$(mktemp) || return 1
-	cat >"$tmp" <<'EOF'
+	cat >"$tmp" <<EOF
 # Ly, as built from source by this repo (see lib/session.sh).
 type            = process
-command         = /usr/bin/ly
+command         = /sbin/agetty -nl /usr/bin/ly tty$LY_INIT_TTY 115200 linux
 smooth-recovery = true
 depends-on      = login.target
 logfile         = /var/log/dinit/ly.log
-# the getty services hold the console, ly switches the VT itself
-options         = shares-console
+# utmp entry, so `who` and logind see the greeter's tty
+inittab-id      = $LY_INIT_TTY
+inittab-line    = tty$LY_INIT_TTY
 EOF
 	root_install_script "$tmp" /etc/dinit.d/ly 644 \
 		|| { rm -f "$tmp"; warn "dinit: could not install /etc/dinit.d/ly"; return 1; }
@@ -271,10 +283,10 @@ install_ly_s6() {
 [ -r /etc/s6/config/ly.conf ] && . /etc/s6/config/ly.conf
 exec "${GETTY:-agetty}" -nl /usr/bin/ly "${TTY:-tty7}" "${BAUD:-115200}" "${TERM:-linux}"
 EOF
-	cat >"$tmp/ly.conf" <<'EOF'
+	cat >"$tmp/ly.conf" <<EOF
 # ly parameters (read by /etc/s6/sv/ly/run)
 GETTY=agetty
-TTY=tty7
+TTY=tty$LY_INIT_TTY
 BAUD=115200
 TERM=linux
 EOF
@@ -298,7 +310,10 @@ ly_tty() {
 
 set_ly_tty() { # <tty>
 	local f=/etc/ly/config.ini n=$1
-	[ -f "$f" ] || return 0
+	if [ ! -f "$f" ]; then
+		have ly && warn "ly: $f is missing, so ly stays on its default VT (tty2)"
+		return 0
+	fi
 	[ "$(ly_tty)" = "$n" ] && return 0
 
 	root cp "$f" "$f.bak" || { warn "ly: could not back up $f"; return 0; }
@@ -315,6 +330,44 @@ set_ly_tty() { # <tty>
 	else
 		warn "ly: $f still does not say tty = $n"
 	fi
+}
+
+# Where each init keeps ly's service definition, for the presence checks below.
+ly_service_file() {
+	case $INIT in
+	systemd) printf '%s' /usr/lib/systemd/system/ly.service ;;
+	openrc) printf '%s' /etc/init.d/ly ;;
+	runit) printf '%s' /etc/runit/sv/ly/run ;;
+	dinit) printf '%s' /etc/dinit.d/ly ;;
+	s6) printf '%s' /etc/s6/sv/ly/run ;;
+	esac
+}
+
+# build_ly is skipped as soon as `ly` is on PATH, so everything it installs
+# around the binary would go stale on a re-run - and a greeter installed before
+# this repo spoke Artix's inits would keep starting the binary on the console.
+# The VT and the two units this repo owns are therefore refreshed on every run
+# (root_install_script backs a differing file up first); upstream's systemd,
+# OpenRC and runit files are only installed when they are missing, so hand
+# edits to them survive.
+refresh_ly_install() {
+	local dir=$HOME/ly file
+	[ "$DISTRO" = artix ] || return 0
+	set_ly_tty "$LY_INIT_TTY"
+	case $INIT in
+	dinit) install_ly_dinit || true ;;
+	s6) install_ly_s6 || true ;;
+	systemd|openrc|runit)
+		file=$(ly_service_file)
+		[ "$file" ] && [ -f "$file" ] && return 0
+		if [ -d "$dir" ]; then
+			install_ly_service "$dir" || true
+		else
+			warn "ly: no $INIT service file and no $dir checkout to install one from"
+		fi
+		;;
+	esac
+	return 0
 }
 
 # Ly opens the session index it saved last time. That list is: shell, xinitrc,
@@ -351,6 +404,7 @@ install_wayland_session() {
 	if ! ensure_ly; then
 		warn "ly is missing: no display manager will start $HOME/.local/bin/dwl-session"
 	fi
+	refresh_ly_install
 
 	preselect_dwl_session
 

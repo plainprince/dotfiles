@@ -104,8 +104,11 @@ wallpapers/           3 files, 16 MB
       Ly's own `res/ly-runit-service` into `/etc/runit/sv/ly` (upstream's `installrunit`
       writes `/etc/sv`, which Artix does not use), and dinit/s6 get a definition from
       this repo (`/etc/dinit.d/ly`, `/etc/s6/sv/ly/{type,run}` + `/etc/s6/config/ly.conf`)
-      modelled on Artix's `ly-dinit` and `s6-services`. All of them point at
-      `/usr/bin/ly` — the source build — never at a packaged `ly-dm`.
+      modelled on Artix's `ly-dinit` and `s6-services`. dinit's own `ly-dinit` runs
+      `/usr/bin/ly` bare (and its Artix package still ships the unexpanded
+      `command = $EXE`); ours launches `agetty -nl /usr/bin/ly tty7` with
+      `inittab-id`/`inittab-line`, the shape of Artix's `agetty-tty*` services. All of
+      them point at `/usr/bin/ly` — the source build — never at a packaged `ly-dm`.
 - [x] **Ly is always built from source** at the pinned `v0.6.0` tag (git +
       submodules, `make installnoconf`, `make installsystemd`), never from a distro
       package: Ly 1.x needs Zig and a packaged 0.6.x would be unpatched. An existing
@@ -133,12 +136,19 @@ wallpapers/           3 files, 16 MB
       greeters read `/usr/share/wayland-sessions`, so the latter is a symlink to the
       former (never clobbering an existing file). `set-default graphical.target`;
       `getty@tty2` disabled because Ly owns tty2.
-- [x] **The VT differs by init.** Ly 0.6.0 activates the VT named in its own config.
-      systemd keeps `tty = 2` and disables `getty@tty2`; Artix's inits all keep gettys
-      on tty1-6 and cannot spare a single one (dinit starts them from `console.conf`,
-      s6 from a tty count), so `set_ly_tty()` writes `tty = 7` into `/etc/ly/config.ini`
-      there and no getty is touched. OpenRC's and runit's Ly scripts read that same key,
-      so all four inits agree on tty7 without extra configuration.
+- [x] **The VT differs by init.** Ly draws on the terminal it was *started* on;
+      `tty` in `config.ini` only names the VT it calls `VT_ACTIVATE` on afterwards
+      (`utils.c: switch_tty`). Both have to agree, so every init launches the greeter
+      through `agetty -nl /usr/bin/ly tty7` (systemd does it with `TTYPath=/dev/tty2`)
+      and `set_ly_tty()` writes the same number into `/etc/ly/config.ini`. systemd
+      keeps `tty = 2` and disables `getty@tty2`; Artix's inits all keep gettys on
+      tty1-6 and cannot spare a single one (dinit starts them from `console.conf`, s6
+      from a tty count), so they use tty7 and no getty is touched. OpenRC's and runit's
+      Ly scripts read that same key, so all four inits agree without extra
+      configuration. `refresh_ly_install()` re-applies the VT and the service files on
+      every run: `build_ly()` is skipped once `ly` is on PATH, so a re-run would
+      otherwise leave an install made before this layer existed (bare `ly` on the
+      console) exactly as it was.
 
 ## Phase 3 — DWL with dwm's config/binds ✅
 
@@ -293,6 +303,15 @@ wallpapers/           3 files, 16 MB
       from both Artix and the AUR. `bash -n` clean on every script. Rendered service
       files, `ly_tty`/`set_ly_tty` and the tty7 hand-off are still **untested on real
       Artix hardware** (all four inits listed below as VM checks).
+- [x] **First real Artix boot: blank VT with a cursor and the greeter under the tty1
+      login prompt.** Ly 0.6.0 does not move itself to the VT named in its config —
+      `switch_tty()` only issues `VT_ACTIVATE`/`VT_WAITACTIVE` on `/dev/console` while
+      drawing continues on the inherited terminal. dinit started the binary bare, so
+      the greeter drew on the console (tty1, over its getty) and then jumped the console
+      to an undrawn tty7. Fixed by starting Ly through `agetty -nl` on its VT like the
+      other three inits and by refreshing the unit/VT on every run. Reproduced from the
+      source (`src/utils.c`, `src/main.c`, `res/ly.service`'s `TTYPath=/dev/tty2`) and
+      the behaviour reported for Artix `ly-dinit` on the forum.
 - [ ] Artix VM per init (OpenRC, runit, s6, dinit): setup run, Ly on tty7 starting dwl,
       `sddm` retired, greeter survives a reboot.
 - [ ] Full `./setup.sh` on a fresh VM (sudo installs + gh login need a human).
