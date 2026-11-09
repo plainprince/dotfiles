@@ -40,7 +40,7 @@ ensure_aur_helper() {
 
 	info "installing paru (AUR helper)"
 	# makepkg refuses to run as root, so a root-only shell cannot build.
-	if [ "$(id -u)" -eq 0 ] && [ -z "${SUDO_USER:-}" ]; then
+	if [ "$(id -u)" -eq 0 ] && [ -z "$(builder_user)" ]; then
 		warn "running as root: makepkg refuses root builds; install paru manually"
 		return 1
 	fi
@@ -93,17 +93,18 @@ aur_install() {
 #   git clone https://aur.archlinux.org/<pkg>.git && cd <pkg> && makepkg -si
 #
 # No helper is involved - that is the point. Artix does not mirror every Arch
-# package (wmenu has no Artix repository at all), ALARM keeps its own set, and a
-# small derivative may have neither paru nor yay. Every failure is a warning:
-# the caller decides what to do without the package.
+# package, ALARM keeps its own set, and a small derivative may have neither paru
+# nor yay. Every failure is a warning: the caller decides what to do without the
+# package (and some names are in neither the repos nor the AUR - check the AUR
+# RPC before adding one here).
 aur_git_install() {
 	[ $# -eq 0 ] && return 0
 	if [ "$PM_FAMILY" != arch ]; then
 		warn "AUR is Arch-only; this is $PM_FAMILY"
 		return 1
 	fi
-	if [ "$(id -u)" -eq 0 ] && [ -z "${SUDO_USER:-}" ]; then
-		warn "makepkg refuses to build as root: run setup.sh as your user (sudo is used for installs)"
+	if [ "$(id -u)" -eq 0 ] && [ -z "$(builder_user)" ]; then
+		warn "makepkg refuses to build as root: run setup.sh as your user (sudo or doas is used for installs)"
 		return 1
 	fi
 	if ! have git || ! have makepkg || ! have fakeroot; then
@@ -572,11 +573,12 @@ install_wayland_pkgs() {
 		# family share these names but not their repositories: a name this
 		# particular set does not carry goes through the AUR by git.
 		# pam is in Arch's base but is named explicitly for ly's build.
+		# wmenu is left to install_wmenu: a name Artix does not carry would
+		# otherwise be retried against an AUR that has no wmenu at all.
 		arch_install_lenient \
 			wlroots0.20 wayland wayland-protocols libxkbcommon libinput pixman fontconfig freetype2 \
 			imlib2 fcft tllist zlib libxcb xcb-util-wm pam \
-			swaybg wmenu wlr-randr xorg-xwayland
-		install_wmenu
+			swaybg wlr-randr xorg-xwayland
 		;;
 	zypper) pkg_install_lenient wlroots-devel wayland-devel libxkbcommon-devel fcft-devel \
 		imlib2-devel pixman-devel fontconfig-devel freetype2-devel tllist-devel libxcb-devel xcb-util-wm-devel \
@@ -606,17 +608,19 @@ install_wayland_pkgs() {
 		warn "no Wayland package list for $PM ($PM_FAMILY): install wlroots 0.20, wayland, wayland-protocols, libxkbcommon, libinput, pixman, fontconfig, freetype, imlib2, fcft, tllist, zlib, libxcb + xcb-util-wm, pam and swaybg/wmenu, then re-run"
 		;;
 	esac
+	install_wmenu
 }
 
-# dwl's menu bind (Mod+Space / Mod+d) runs wmenu-run. wmenu sits in Arch's
-# extra repository, has no Artix repository at all, and its AUR build is
-# x86-only - so after the repos the AUR is asked by git. bemenu speaks the same
-# dmenu protocol, and lib/session.sh's wmenu-run shim puts it behind that name;
-# the bind and dwl's config stay untouched either way.
+# dwl's menu bind (Mod+Space / Mod+d) runs wmenu-run. wmenu is in Arch's extra
+# repository; Artix has no repository for it, and the AUR carries no wmenu under
+# any name (wmenu, wmenu-git and wmenu-wayland all answer "not found"), so a
+# git build cannot help there. bemenu speaks the same dmenu protocol, and
+# lib/session.sh's wmenu-run shim puts it behind that name; the bind and dwl's
+# config stay untouched either way.
 install_wmenu() {
 	have wmenu && return 0
 	if [ "$PM_FAMILY" = arch ]; then
-		aur_git_install wmenu-git || true
+		pkg_install wmenu || note "wmenu: not in this system's repositories"
 		have wmenu && return 0
 	fi
 	have bemenu-run || pkg_install_lenient bemenu

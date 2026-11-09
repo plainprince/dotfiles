@@ -42,11 +42,10 @@ install_session_scripts() {
 }
 
 # dwl's menu bind (Mod+Space / Mod+d) runs `wmenu-run`. Where wmenu is not
-# packaged - Artix has no repository for it at all, and the AUR build that
-# lib/packages.sh tries after the repos is x86-only - bemenu, which speaks the
-# same dmenu protocol and ships bemenu-run, answers to that name through a shim
-# in ~/.local/bin, a directory dwl-session puts on PATH. Either way the dwl
-# config stays untouched.
+# packaged - Artix has no repository for it, and the AUR has no wmenu under any
+# name - bemenu, which speaks the same dmenu protocol and ships bemenu-run,
+# answers to that name through a shim in ~/.local/bin, a directory dwl-session
+# puts on PATH. Either way the dwl config stays untouched.
 install_menu_command() {
 	have wmenu && return 0
 	if ! have bemenu-run; then
@@ -57,7 +56,7 @@ install_menu_command() {
 	tmp=$(mktemp) || return 0
 	printf '%s\n' \
 		'#!/bin/sh' \
-		'# wmenu is not packaged for Artix; bemenu speaks the same dmenu protocol.' \
+		'# wmenu is not packaged for this system; bemenu speaks the same protocol.' \
 		'exec bemenu-run "$@"' >"$tmp"
 	install_script "$tmp" "$HOME/.local/bin/wmenu-run"
 	rm -f "$tmp"

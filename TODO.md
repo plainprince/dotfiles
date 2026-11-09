@@ -73,10 +73,9 @@ wallpapers/           3 files, 16 MB
       (for XWayland), swaybg/wmenu/wlr-randr/xwayland, plus pam/xcb headers for
       Ly when it has to be built from source.
 - [x] **Artix**: same package names as Arch (pacman → AUR), including the versioned
-      `wlroots0.20`. Artix has no `wmenu` repository at all, so after the repos the
-      AUR is asked by git (`makepkg -si`), and only if that fails does `bemenu`
-      stand in through `~/.local/bin/wmenu-run` — dwl's menu bind and its config are
-      untouched either way.
+      `wlroots0.20`. Artix has no `wmenu` repository and the AUR has no `wmenu`
+      either, so `bemenu` stands in through `~/.local/bin/wmenu-run` — dwl's menu
+      bind and its config are untouched.
 - [x] **Suckless**: clone pinned → apply patches → refresh `config.h` → build+install;
       `st` symlink only when no real X11 `st` exists.
 - [x] **macOS**: Homebrew installed when absent (non-interactive, Xcode CLT gate) and
@@ -363,11 +362,22 @@ wallpapers/           3 files, 16 MB
 - [x] **Browser fallback is a list**: chromium → chromium-browser → firefox-esr →
       firefox, then the AUR on arch, and `Mod+Shift+Return` follows whatever was
       found (`set_dwl_browser`).
-- [x] Verified in a container with fake manager stubs and fake trees: 92 checks
+- [x] **sudo or doas**: `require_sudo` takes sudo when it exists and doas
+      otherwise, and everything privileged goes through `root()` → `$ESCALATE`, so
+      `pkg_install`, the init units and `/etc/ly` need no per-site branch. doas has
+      no timestamp of its own, so the 50 s keepalive is sudo-only and the probe is
+      `doas -n true` (never prompts); `builder_user` reads `SUDO_USER` then
+      `DOAS_USER` for the drop-to-user AUR builds (`doas -u`).
+- [x] **AUR git fallback has a name that does not exist**: `wmenu-git` was never in
+      the AUR (checked the RPC: `wmenu`, `wmenu-git`, `wmenu-wayland` all
+      not-found), so `install_wmenu` no longer clones a 404 - it asks the
+      repositories once and otherwise installs `bemenu` for the `wmenu-run` shim.
+- [x] Verified in a container with fake manager stubs and fake trees: 111 checks
       (pick_pm per layout incl. ostree/Termux/Bedrock ordering, pkg_install/pkg_sync
       argv per manager, lenient retry, AUR git build/skip/refuse, browser + wmenu
-      fallbacks, Termux refusal). Not verified: real installs on those distros - the
-      package names for gentoo/void/swupd/slackpkg are best effort by nature.
+      fallbacks, doas escalation/drop-to-user, Termux refusal). Not verified: real
+      installs on those distros - the package names for gentoo/void/swupd/slackpkg
+      are best effort by nature.
 
 ## Decisions taken
 
@@ -408,3 +418,7 @@ wallpapers/           3 files, 16 MB
     managers, and a distro that ships its own repository set (Artix, ALARM, SteamOS)
     is the same family with different packages - so names live in per-manager lists
     and a miss is warned, not fatal.
+14. **Escalation is a variable, not a command name**: `root()` runs `$ESCALATE`,
+    which `require_sudo` sets to `sudo` or `doas` (both take `-u`), and
+    `as_builder()` drops to `$SUDO_USER`/`$DOAS_USER` the same way. Nothing else
+    mentions sudo, so a doas-only Alpine/Void box needs no special case.

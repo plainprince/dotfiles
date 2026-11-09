@@ -18,17 +18,40 @@ banner() {
 	cat <<'EOF'
   pre-rice setup
   Installs packages and writes files under /etc and /usr/local.
-  sudo is asked for once and kept alive for the whole run.
+  sudo (or doas) is asked for once and kept alive for the whole run.
 EOF
 }
 
-root() { if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi; }
+# Which command escalates: sudo where it exists, doas otherwise (Alpine and
+# Void images, OpenBSD-flavoured setups, anyone who removed sudo on purpose).
+# require_sudo fills it; both are called as "$ESCALATE cmd args" and both take
+# -u user, so nothing else in the tree has to know which one is in play.
+ESCALATE=
+
+root() {
+	if [ "$(id -u)" -eq 0 ]; then "$@"
+	elif [ -n "$ESCALATE" ] && [ "$ESCALATE" != none ]; then "$ESCALATE" "$@"
+	elif have sudo; then sudo "$@"
+	elif have doas; then doas "$@"
+	else die "this step needs root: install sudo or doas, or run setup.sh as root"
+	fi
+}
 
 # Some steps must not run as root (makepkg refuses to build one): drop to the
-# user who called setup.sh through sudo, stay put otherwise.
+# user who escalated to setup.sh - sudo exports SUDO_USER, doas sets DOAS_USER -
+# and stay put otherwise.
+builder_user() { printf '%s' "${SUDO_USER:-${DOAS_USER:-}}"; }
+
 as_builder() {
-	if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
-		sudo -u "$SUDO_USER" "$@"
+	local u
+	u=$(builder_user)
+	if [ "$(id -u)" -eq 0 ] && [ -n "$u" ]; then
+		if have sudo; then sudo -u "$u" "$@"
+		elif have doas; then doas -u "$u" "$@"
+		else
+			warn "cannot drop to $u: no sudo or doas to run as that user"
+			return 1
+		fi
 	else
 		"$@"
 	fi
@@ -205,7 +228,7 @@ detect_init() {
 }
 
 # ---------------------------------------------------------------------------
-# sudo: ask once, then keep the timestamp alive for the whole run
+# escalation: pick sudo or doas, ask once, keep the timestamp alive
 # ---------------------------------------------------------------------------
 require_sudo() {
 	if [ "${PM_FAMILY:-}" = termux ]; then
@@ -213,16 +236,33 @@ require_sudo() {
 	fi
 	if [ "$(id -u)" -eq 0 ]; then
 		SUDO=none
+		ESCALATE=none
 		return 0
 	fi
-	have sudo || die "sudo is required (or run setup.sh as root)"
+	if have sudo; then
+		ESCALATE=sudo
+	elif have doas; then
+		ESCALATE=doas
+		note "sudo is not installed: using doas for the privileged steps"
+	else
+		die "sudo or doas is required (or run setup.sh as root)"
+	fi
 	printf '\n%sPrivileged steps:%s package installs, /usr/local binaries, /etc/ly, init services.\n' "$B" "$Z"
-	sudo -v || die "sudo authentication failed"
-	SUDO=sudo
-	# keepalive: refresh the sudo timestamp every 50s while this script lives
-	( while kill -0 "$$" 2>/dev/null; do sudo -n true 2>/dev/null || exit 0; sleep 50; done ) &
-	SUDO_KEEPALIVE=$!
-	trap 'kill "$SUDO_KEEPALIVE" 2>/dev/null || true' EXIT
+	if [ "$ESCALATE" = sudo ]; then
+		sudo -v || die "sudo authentication failed"
+		# keepalive: refresh the sudo timestamp every 50s while this script lives
+		( while kill -0 "$$" 2>/dev/null; do sudo -n true 2>/dev/null || exit 0; sleep 50; done ) >/dev/null 2>&1 &
+		SUDO_KEEPALIVE=$!
+		trap 'kill "$SUDO_KEEPALIVE" 2>/dev/null || true' EXIT
+	else
+		# doas keeps no timestamp of its own unless doas.conf says `persist`, and
+		# its config may name commands one by one - probe without a prompt and
+		# carry on either way: the first real privileged step speaks up if it
+		# cannot authenticate.
+		doas -n true 2>/dev/null \
+			|| note "doas: no cached credentials (doas.conf decides whether a password is asked)"
+	fi
+	SUDO=$ESCALATE
 }
 
 # ---------------------------------------------------------------------------
