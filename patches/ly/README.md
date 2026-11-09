@@ -2,7 +2,7 @@
 
 Patch for the `configator` submodule of [Ly](https://github.com/fairyglade/ly),
 pinned to `v0.6.0` (see `lib/session.sh`). It is applied to
-`$HOME/ly/sub/configator` after the submodules are checked out, because a
+`~/.cache/dotfiles/ly/sub/configator` after the submodules are checked out, because a
 submodule is its own git repository.
 
 | patch | what |
@@ -12,7 +12,7 @@ submodule is its own git repository.
 Regenerating (in the clone, never in this repo's tree):
 
 ```sh
-cd ~/ly/sub/configator
+cd ~/.cache/dotfiles/ly/sub/configator
 # ...edit src/configator.c...
 git diff > ~/dev/dotfiles/patches/ly/01-configator-search.patch
 ```

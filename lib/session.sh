@@ -41,15 +41,16 @@ install_session_scripts() {
 	install_menu_command
 }
 
-# dwl's menu bind (Mod+Space / Mod+d) runs `wmenu-run`. Arch packages wmenu;
-# Artix does not, and the AUR has no copy either, so bemenu - which speaks the
-# same dmenu protocol and ships bemenu-run - answers to that name through a shim
-# in ~/.local/bin, a directory dwl-session puts on PATH. The dwl config stays
-# untouched either way.
+# dwl's menu bind (Mod+Space / Mod+d) runs `wmenu-run`. Where wmenu is not
+# packaged - Artix has no repository for it at all, and the AUR build that
+# lib/packages.sh tries after the repos is x86-only - bemenu, which speaks the
+# same dmenu protocol and ships bemenu-run, answers to that name through a shim
+# in ~/.local/bin, a directory dwl-session puts on PATH. Either way the dwl
+# config stays untouched.
 install_menu_command() {
 	have wmenu && return 0
-	if [ "$DISTRO" != artix ] || ! have bemenu-run; then
-		have bemenu-run || warn "no wmenu/bemenu: the Mod+Space menu will not open"
+	if ! have bemenu-run; then
+		warn "no wmenu/bemenu: the Mod+Space menu will not open"
 		return 0
 	fi
 	local tmp
@@ -127,7 +128,7 @@ ensure_ly() {
 }
 
 build_ly() {
-	local dir=$HOME/ly cp=$REPO_ROOT/patches/ly/01-configator-search.patch
+	local dir=$CACHE_DIR/ly cp=$REPO_ROOT/patches/ly/01-configator-search.patch
 
 	if ! have git || ! { have cc || have gcc; }; then
 		warn "ly: git and a C compiler are needed to build it from source"
@@ -135,6 +136,7 @@ build_ly() {
 	fi
 
 	info "building ly $LY_REF from source"
+	stale_tree_note "$HOME/ly" "$dir"
 	if [ -d "$dir/.git" ]; then
 		note "reusing $dir"
 		git -C "$dir" fetch --quiet --tags origin 2>/dev/null || warn "fetch failed in $dir"
@@ -147,6 +149,7 @@ build_ly() {
 			note "$dir has local changes, leaving checkout alone"
 		fi
 	else
+		mkdir -p "$CACHE_DIR" || { warn "could not create $CACHE_DIR"; return 1; }
 		git clone --quiet "$LY_REPO" "$dir" || { warn "clone failed: $LY_REPO"; return 1; }
 		git -C "$dir" checkout --quiet --detach "$LY_REF" 2>/dev/null \
 			|| warn "could not check out $LY_REF in $dir"
@@ -351,7 +354,7 @@ ly_service_file() {
 # OpenRC and runit files are only installed when they are missing, so hand
 # edits to them survive.
 refresh_ly_install() {
-	local dir=$HOME/ly file
+	local dir=$CACHE_DIR/ly file
 	[ "$DISTRO" = artix ] || return 0
 	set_ly_tty "$LY_INIT_TTY"
 	case $INIT in

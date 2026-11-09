@@ -51,7 +51,8 @@ wallpapers/           3 files, 16 MB
 
 - [x] `set -euo pipefail`, repo-root-relative, per-stage functions, idempotent re-runs.
 - [x] **Sudo once up front** (`sudo -v` + 50 s keepalive) with a warning banner.
-- [x] **Distro + arch detection** → apt/dnf/pacman/zypper/apk/brew.
+- [x] **Distro + arch detection** → apt/dnf/yum/pacman/zypper/apk/xbps/emerge/
+      nix/guix/eopkg/swupd/slackpkg/tce-load/pkcon/rpm-ostree/brew (see Phase 10).
 - [x] **Browser check before gh**: any browser → done, else chromium (firefox as second
       resort). macOS: Safari counts.
 - [x] **Dev tools** (first stage): git, gh, **build-essential/gcc/make/pkg-config**,
@@ -63,7 +64,8 @@ wallpapers/           3 files, 16 MB
       **removed, not purged** (apt/dnf/zypper/pacman/apk/brew), so its config stays
       and nothing stale answers `nvim`. Re-runs compare `nvim --version` with the
       latest release tag and do nothing when equal.
-- [x] **VSCodium**: deb822 repo (apt), yum repo (dnf), AUR via yay/paru (pacman), cask.
+- [x] **VSCodium**: deb822 repo (apt), yum repo (dnf), AUR via yay/paru then git
+      (pacman), distro package (xbps/apk/eopkg/emerge/nix/guix), cask.
 - [x] **Rice tools**: bat, eza, starship (official installer fallback), zoxide, btop,
       cava, cmatrix, fastfetch + FiraCode Nerd Font.
 - [x] **Build deps**: `libwlroots-0.20-dev`, wayland, wayland-protocols, xkbcommon,
@@ -71,9 +73,10 @@ wallpapers/           3 files, 16 MB
       (for XWayland), swaybg/wmenu/wlr-randr/xwayland, plus pam/xcb headers for
       Ly when it has to be built from source.
 - [x] **Artix**: same package names as Arch (pacman → AUR), including the versioned
-      `wlroots0.20`. Artix packages neither `wmenu` nor an AUR copy, so `bemenu` is
-      installed instead and `~/.local/bin/wmenu-run` execs `bemenu-run` — dwl's menu
-      bind and its config are untouched.
+      `wlroots0.20`. Artix has no `wmenu` repository at all, so after the repos the
+      AUR is asked by git (`makepkg -si`), and only if that fails does `bemenu`
+      stand in through `~/.local/bin/wmenu-run` — dwl's menu bind and its config are
+      untouched either way.
 - [x] **Suckless**: clone pinned → apply patches → refresh `config.h` → build+install;
       `st` symlink only when no real X11 `st` exists.
 - [x] **macOS**: Homebrew installed when absent (non-interactive, Xcode CLT gate) and
@@ -332,6 +335,40 @@ wallpapers/           3 files, 16 MB
 - [ ] Ly on tty2 → dwl session (wallpaper + bar + status) on real hardware.
 - [ ] Walk the bind checklist and st-wl features (scrollback, copyurl, clipboard) live.
 
+## Phase 10 — other distros and package managers ✅
+
+- [x] **Families, not distros.** `pick_pm` (lib/common.sh) asks which manager owns
+      the system and sets `PM` + `PM_FAMILY`; the family picks package names. Every
+      distro from Alpine to Zorin (plus ChromeOS/Crostini, Proxmox, Qubes, Tails,
+      Sailfish, SteamOS, Bedrock, ...) lands on one of: debian, fedora, arch, suse,
+      alpine, void, gentoo, nixos, guix, solus, clear, slackware, tinycore,
+      packagekit, termux, macos, none.
+- [x] **Co-installed managers resolve by order**: rpm-ostree before dnf on an
+      immutable image (Silverblue/Bazzite/CoreOS: layering, then a reboot), Termux
+      first (apt in a prefix, no root), real managers before PackageKit (Endless,
+      Sailfish), pacman before a stray apt on Bedrock.
+- [x] **Artix/ALARM/derivatives keep their own repositories**: a name the set does
+      not carry is retried as `git clone https://aur.archlinux.org/<pkg>.git` +
+      `makepkg -si` in a temp dir, as the invoking user (makepkg refuses root), with
+      a PKGBUILD that does not list `$ARCH` rejected up front instead of burning a
+      build. Nothing new is added to the repo: the AUR *is* the git path.
+- [x] **Missing packages warn, never kill the run**: `pkg_install_lenient` retries
+      one at a time, `pkg_install_first` takes a list of spellings. Only the
+      wlroots/pkg-config check at dwl's build stays fatal - it names the package.
+- [x] **Immutable / bundle-only / source-first systems are attempted, then named**:
+      swupd bundles, slackpkg, tce-load and PackageKit get the generic names and
+      report what they could not do; NixOS, Guix and Termux skip the rice
+      (`RICE_SUPPORTED=0`) because it needs a writable `/usr/local`, `/etc/ly` and an
+      init unit - the shell/dev/zsh stages still run.
+- [x] **Browser fallback is a list**: chromium → chromium-browser → firefox-esr →
+      firefox, then the AUR on arch, and `Mod+Shift+Return` follows whatever was
+      found (`set_dwl_browser`).
+- [x] Verified in a container with fake manager stubs and fake trees: 92 checks
+      (pick_pm per layout incl. ostree/Termux/Bedrock ordering, pkg_install/pkg_sync
+      argv per manager, lenient retry, AUR git build/skip/refuse, browser + wmenu
+      fallbacks, Termux refusal). Not verified: real installs on those distros - the
+      package names for gentoo/void/swupd/slackpkg are best effort by nature.
+
 ## Decisions taken
 
 1. **Bar**: dwlb (dwl-native). No IPC patch → dwl's `-s` stdout feeds the tags, the
@@ -355,3 +392,19 @@ wallpapers/           3 files, 16 MB
    stays the package path and the repo keeps no per-init package tables. Only the
    display-manager step is init-aware; 66 is detected and warned about rather than
    half-supported.
+10. **Build trees live in `~/.cache/dotfiles`**: `dwl`, `dwlb`, `st-wl` and Ly's
+    checkout are derived artefacts (pin + patches + build), so they stay out of
+    `$HOME` and out of the repo - one re-run re-creates them. `stale_tree_note`
+    names a leftover `~/dwl`/`~/ly`/... from before the move instead of silently
+    building next to it.
+11. **The browser bind follows the machine**: `Mod+Shift+Return` opens whatever
+    `ensure_browser()` found or installed instead of the patch's hard-coded
+    chromium, so the key is never dead on a firefox-only install.
+12. **AUR by git, not only by helper**: `aur_git_install` clones
+    `https://aur.archlinux.org/<pkg>.git` and runs `makepkg -si`, because Artix has
+    no repository for some Arch packages, ALARM is a separate repository set and a
+    derivative may have neither paru nor yay. Helper first, git second, warn third.
+13. **Package managers are families, not distro names**: 50+ distros are a dozen
+    managers, and a distro that ships its own repository set (Artix, ALARM, SteamOS)
+    is the same family with different packages - so names live in per-manager lists
+    and a miss is warned, not fatal.

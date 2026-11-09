@@ -11,6 +11,7 @@ STWL_REF=86505348b5ebf1532229e201e5d782b8ea92266c
 
 clone_pinned() { # <repo> <ref> <dir>
 	local url=$1 ref=$2 dir=$3
+	mkdir -p "$(dirname "$dir")" || die "could not create $(dirname "$dir")"
 	if [ -d "$dir/.git" ]; then
 		note "reusing $dir"
 		git -C "$dir" fetch --quiet origin 2>/dev/null || warn "fetch failed in $dir"
@@ -83,6 +84,33 @@ sync_generated() { # <dir>
 	done
 }
 
+# Mod+Shift+Return spawns `browsercmd`, which 01-config.patch hard-codes to
+# chromium. Point the bind at the browser this machine actually has - the one
+# ensure_browser() found or installed - or a firefox-only box gets a dead key.
+# Runs before sync_generated(): the edit goes into config.def.h, and that copy
+# overwrites config.h, which is what the build compiles.
+set_dwl_browser() { # <dwl checkout>
+	local dir=$1 f=$1/config.def.h b cur
+
+	[ -f "$f" ] || return 0
+	grep -q 'browsercmd\[\]' "$f" || return 0
+
+	b=$(detect_browser) || b=
+	[ -n "$b" ] || return 0
+
+	cur=$(sed -n 's/.*browsercmd\[\][^"]*"\([^"]*\)".*/\1/p' "$f" | head -1)
+	[ "$cur" = "$b" ] && return 0
+
+	sed -i "s|^\(static const char \*browsercmd\[\] = {[[:space:]]*\)\"[^\"]*\"|\1\"$b\"|" "$f" \
+		|| { warn "dwl: could not rewrite browsercmd in $f"; return 0; }
+	cur=$(sed -n 's/.*browsercmd\[\][^"]*"\([^"]*\)".*/\1/p' "$f" | head -1)
+	if [ "$cur" = "$b" ]; then
+		note "dwl: Mod+Shift+Return -> $b"
+	else
+		warn "dwl: browsercmd in $f still does not name $b"
+	fi
+}
+
 build_suckless() {
 	[ "$PLATFORM" = linux ] || return 0
 
@@ -92,31 +120,35 @@ build_suckless() {
 	have tic || warn "tic is missing; st-wl's terminfo entry will not be installed (package: ncurses-bin)"
 
 	info "dwl"
-	clone_pinned "$DWL_REPO" "$DWL_REF" "$HOME/dwl"
-	apply_patches "$HOME/dwl" "$REPO_ROOT/patches/dwl"
-	sync_generated "$HOME/dwl"
+	stale_tree_note "$HOME/dwl" "$CACHE_DIR/dwl"
+	clone_pinned "$DWL_REPO" "$DWL_REF" "$CACHE_DIR/dwl"
+	apply_patches "$CACHE_DIR/dwl" "$REPO_ROOT/patches/dwl"
+	set_dwl_browser "$CACHE_DIR/dwl"
+	sync_generated "$CACHE_DIR/dwl"
 	pkg-config --exists wlroots-0.20 || die "wlroots-0.20 not found via pkg-config.
      dwl's pinned commit needs wlroots 0.20:
        debian: libwlroots-0.20-dev   fedora: wlroots-devel   arch: wlroots0.20"
-	make -C "$HOME/dwl" || die "dwl build failed"
-	root make -C "$HOME/dwl" install
+	make -C "$CACHE_DIR/dwl" || die "dwl build failed"
+	root make -C "$CACHE_DIR/dwl" install
 	# dwl's install rewrites its session file to a plain `Exec=dwl`; point it back
 	# at our wrapper here, not only in install_wayland_session(), or a failure in
 	# any later build step leaves the session without bar, wallpaper and status.
 	point_session_at_wrapper
 
 	info "dwlb"
-	clone_pinned "$DWLB_REPO" "$DWLB_REF" "$HOME/dwlb"
-	apply_patches "$HOME/dwlb" "$REPO_ROOT/patches/dwlb"
-	make -C "$HOME/dwlb" || die "dwlb build failed"
-	root make -C "$HOME/dwlb" install
+	stale_tree_note "$HOME/dwlb" "$CACHE_DIR/dwlb"
+	clone_pinned "$DWLB_REPO" "$DWLB_REF" "$CACHE_DIR/dwlb"
+	apply_patches "$CACHE_DIR/dwlb" "$REPO_ROOT/patches/dwlb"
+	make -C "$CACHE_DIR/dwlb" || die "dwlb build failed"
+	root make -C "$CACHE_DIR/dwlb" install
 
 	info "st-wl"
-	clone_pinned "$STWL_REPO" "$STWL_REF" "$HOME/st-wl"
-	apply_patches "$HOME/st-wl" "$REPO_ROOT/patches/st"
-	sync_generated "$HOME/st-wl"
-	make -C "$HOME/st-wl" || die "st-wl build failed"
-	root make -C "$HOME/st-wl" install
+	stale_tree_note "$HOME/st-wl" "$CACHE_DIR/st-wl"
+	clone_pinned "$STWL_REPO" "$STWL_REF" "$CACHE_DIR/st-wl"
+	apply_patches "$CACHE_DIR/st-wl" "$REPO_ROOT/patches/st"
+	sync_generated "$CACHE_DIR/st-wl"
+	make -C "$CACHE_DIR/st-wl" || die "st-wl build failed"
+	root make -C "$CACHE_DIR/st-wl" install
 
 	# many tools call `st`; link it unless an st is already installed.
 	if ! have st; then
